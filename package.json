@@ -1,0 +1,12 @@
+{
+  "name": "deepgram-mic-stream",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@deepgram/sdk": "^4.11.3",
+    "node-record-lpcm16": "^1.0.1"
+  }
+}
