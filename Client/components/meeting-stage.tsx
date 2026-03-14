@@ -1,40 +1,17 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { useWebRTC } from "@/hooks/use-webrtc"
-
-// Static fallback data for demo participants
-const STATIC_PARTICIPANTS = [
-  {
-    name: "Sarah Chen",
-    image: "https://images.unsplash.com/photo-1580489944761-15a19d654956?w=400&h=300&fit=crop&crop=face",
-    speaking: true,
-  },
-  {
-    name: "Marcus Johnson",
-    image: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&h=150&fit=crop&crop=face",
-  },
-  {
-    name: "Elena Rodriguez",
-    image: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=200&h=150&fit=crop&crop=face",
-  },
-  {
-    name: "David Kim",
-    image: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=200&h=150&fit=crop&crop=face",
-  },
-]
+import { useWebRTCContext } from "@/hooks/webrtc-context"
 
 // Renders a video element whose srcObject is kept in sync with the stream,
-// or falls back to a static image if no stream is provided.
+// or falls back to an initial-letter avatar if no stream is available.
 function VideoTile({
   stream,
-  fallbackSrc,
   name,
   isSpeaking = false,
   size = "small",
 }: {
   stream?: MediaStream | null
-  fallbackSrc?: string
   name: string
   isSpeaking?: boolean
   size?: "large" | "small"
@@ -66,10 +43,8 @@ function VideoTile({
           muted={name === "You"}
           className="h-full w-full object-cover"
         />
-      ) : fallbackSrc ? (
-        <img src={fallbackSrc} alt={name} className="h-full w-full object-cover" />
       ) : (
-        // No stream and no image — show initial avatar placeholder
+        // No stream — show initial avatar placeholder
         <div className="flex h-full w-full items-center justify-center bg-slate-700">
           <span className="text-2xl font-semibold text-slate-300 select-none">
             {name.charAt(0).toUpperCase()}
@@ -103,15 +78,8 @@ function VideoTile({
   )
 }
 
-export default function MeetingStage({ roomId = "demo-room" }: { roomId?: string }) {
-  const { localStream, remotePeers, error } = useWebRTC(roomId, "You")
-
-  // Map remote peer streams by index to the static participant list for fallback labels/images
-  const activeSpeaker = STATIC_PARTICIPANTS[0]
-  const railParticipants = [
-    ...STATIC_PARTICIPANTS.slice(1),
-    { name: "You", image: undefined as string | undefined },
-  ]
+export default function MeetingStage() {
+  const { localStream, remotePeers, error } = useWebRTCContext()
 
   return (
     <div className="flex h-full gap-4 p-4 md:gap-6 md:p-6">
@@ -122,40 +90,38 @@ export default function MeetingStage({ roomId = "demo-room" }: { roomId?: string
         </div>
       )}
 
-      {/* Main speaker (active speaker — first remote peer or static fallback) */}
+      {/* Main speaker — first remote peer, or waiting placeholder */}
       <div className="flex flex-1 items-center justify-center">
         <div className="relative aspect-video w-full max-w-4xl overflow-hidden rounded-2xl bg-slate-800 ring-1 ring-border/30">
-          <VideoTile
-            stream={remotePeers[0]?.stream ?? null}
-            fallbackSrc={activeSpeaker.image}
-            name={remotePeers[0]?.userId ?? activeSpeaker.name}
-            isSpeaking={activeSpeaker.speaking}
-            size="large"
-          />
+          {remotePeers[0] ? (
+            <VideoTile
+              stream={remotePeers[0].stream}
+              name={remotePeers[0].userId}
+              isSpeaking
+              size="large"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center">
+              <p className="text-sm text-slate-400">Waiting for others to join…</p>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Right participant rail */}
+      {/* Right participant rail — remaining remote peers + local "You" tile */}
       <div className="hidden w-44 shrink-0 flex-col gap-3 lg:flex xl:w-52">
-        {railParticipants.map((participant, index) => {
-          const isLocalSlot = participant.name === "You"
-          // Map remaining remote peers (index 1+) to static slots
-          const remotePeer = isLocalSlot ? null : remotePeers[index + 1] ?? null
-
-          return (
-            <div
-              key={participant.name}
-              className="relative aspect-video w-full overflow-hidden rounded-xl bg-slate-800 ring-1 ring-border/30"
-            >
-              <VideoTile
-                stream={isLocalSlot ? localStream : remotePeer?.stream ?? null}
-                fallbackSrc={participant.image}
-                name={isLocalSlot ? "You" : remotePeer?.userId ?? participant.name}
-                size="small"
-              />
-            </div>
-          )
-        })}
+        {remotePeers.slice(1).map((peer) => (
+          <div
+            key={peer.peerId}
+            className="relative aspect-video w-full overflow-hidden rounded-xl bg-slate-800 ring-1 ring-border/30"
+          >
+            <VideoTile stream={peer.stream} name={peer.userId} size="small" />
+          </div>
+        ))}
+        {/* Local camera — always last */}
+        <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-slate-800 ring-1 ring-border/30">
+          <VideoTile stream={localStream} name="You" size="small" />
+        </div>
       </div>
     </div>
   )
