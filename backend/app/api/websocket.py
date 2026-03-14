@@ -53,6 +53,7 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
     pipeline: SessionPipeline = websocket.app.state.pipeline
 
     state = await session_manager.connect(session_id=session_id)
+    session_manager.register_ws(session_id, websocket)
     await websocket.send_json(
         StatusEvent(
             session_id=state.session_id,
@@ -91,7 +92,13 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
                     state = await session_manager.get_or_create(session_id=session_id)
                     outbound_events = await pipeline.handle_event(state=state, event=event)
                 for outbound_event in outbound_events:
-                    await websocket.send_json(outbound_event.model_dump(mode="json"))
+                    payload = outbound_event.model_dump(mode="json")
+                    # Send back to the sender
+                    await websocket.send_json(payload)
+                    # Broadcast transcript.update to everyone else in the session
+                    # so all clients see each other's speech labeled by speaker
+                    if payload.get("type") == "transcript.update":
+                        await session_manager.broadcast(session_id, payload, exclude=websocket)
             except Exception as exc:
                 logger.exception("Pipeline error for session %s", session_id)
                 try:
@@ -103,4 +110,5 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
     finally:
         pause_task.cancel()
         await asyncio.gather(pause_task, return_exceptions=True)
+        session_manager.unregister_ws(session_id, websocket)
         await session_manager.disconnect(session_id=session_id)

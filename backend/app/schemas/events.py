@@ -19,11 +19,13 @@ class SessionStopEvent(BaseModel):
 class SpeechPartialEvent(BaseModel):
     type: Literal["speech.partial"]
     text: str
+    speaker: Optional[str] = None
 
 
 class SpeechFinalEvent(BaseModel):
     type: Literal["speech.final"]
     text: str
+    speaker: Optional[str] = None
 
 
 class UICommandEvent(BaseModel):
@@ -45,6 +47,7 @@ class TranscriptUpdateEvent(BaseModel):
     type: Literal["transcript.update"] = "transcript.update"
     text: str
     is_final: bool = False
+    speaker: Optional[str] = None
 
 
 class IntentResultEvent(BaseModel):
