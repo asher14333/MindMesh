@@ -80,24 +80,27 @@ export function useWebRTC(roomId: string, userId: string = "You"): WebRTCState {
       }
 
       pc.ontrack = (e) => {
-        // Always add to the peer's dedicated stream — this handles the case where
-        // audio and video arrive as separate ontrack events (e.streams[0] may differ)
-        const peerStream = remoteStreamsRef.current.get(remotePeerId)!
-        e.track.onunmute = () => {
-          if (!peerStream.getTracks().includes(e.track)) {
-            peerStream.addTrack(e.track)
-          }
-          setRemotePeers((prev) =>
-            prev.map((p) => p.peerId === remotePeerId ? { ...p, stream: peerStream } : p)
+        // Build a NEW MediaStream each time a track arrives.
+        // This is critical: mutating the existing stream in place leaves the `stream`
+        // object reference unchanged, so the useEffect([stream]) in VideoTile/PeerTile
+        // never re-fires — meaning el.srcObject and el.play() are never called for
+        // the audio track. A new reference forces the useEffect to re-execute.
+        const addTrackAndUpdate = () => {
+          const prev = remoteStreamsRef.current.get(remotePeerId)
+          const allTracks = prev ? prev.getTracks() : []
+          if (!allTracks.includes(e.track)) allTracks.push(e.track)
+          const newStream = new MediaStream(allTracks)
+          remoteStreamsRef.current.set(remotePeerId, newStream)
+          setRemotePeers((peers) =>
+            peers.map((p) => p.peerId === remotePeerId ? { ...p, stream: newStream } : p)
           )
         }
-        // Also fire immediately — some tracks arrive already unmuted
-        if (!peerStream.getTracks().includes(e.track)) {
-          peerStream.addTrack(e.track)
-        }
-        setRemotePeers((prev) =>
-          prev.map((p) => p.peerId === remotePeerId ? { ...p, stream: peerStream } : p)
-        )
+
+        // Fire immediately — track may already be live
+        addTrackAndUpdate()
+
+        // Also fire on unmute in case the track starts in a muted/buffering state
+        e.track.onunmute = addTrackAndUpdate
       }
 
       // Add local tracks

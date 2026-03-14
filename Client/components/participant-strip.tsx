@@ -19,7 +19,22 @@ function PeerTile({
     const el = videoRef.current
     if (!el) return
     el.srcObject = stream
-  }, [stream])
+    // React's `muted` JSX prop does not reliably set the DOM property.
+    // Set it imperatively so remote peers are never accidentally muted.
+    el.muted = name === "You"
+    el.volume = 1.0
+    if (stream) {
+      // Explicit play() — autoPlay alone is unreliable for unmuted media.
+      // If the browser blocks it (NotAllowedError / autoplay policy), register a
+      // one-time click listener so the next user interaction unlocks audio.
+      el.play().catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "NotAllowedError") {
+          const unlock = () => { el.play().catch(() => {}); document.removeEventListener("click", unlock) }
+          document.addEventListener("click", unlock)
+        }
+      })
+    }
+  }, [stream, name])
 
   return (
     <div
@@ -34,7 +49,6 @@ function PeerTile({
           ref={videoRef}
           autoPlay
           playsInline
-          muted={name === "You"}
           className="h-full w-full object-cover"
         />
       ) : (
