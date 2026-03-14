@@ -7,10 +7,12 @@ import type { RemotePeer } from "@/hooks/use-webrtc"
 function PeerTile({
   stream,
   name,
+  isLocal = false,
   speaking = false,
 }: {
   stream: MediaStream | null
   name: string
+  isLocal?: boolean
   speaking?: boolean
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -19,9 +21,9 @@ function PeerTile({
     const el = videoRef.current
     if (!el) return
     el.srcObject = stream
-    // React's `muted` JSX prop does not reliably set the DOM property.
-    // Set it imperatively so remote peers are never accidentally muted.
-    el.muted = name === "You"
+    // Only mute our own feed — never mute remote peers.
+    // Do NOT use name === 'You': every peer may share the same display name.
+    el.muted = isLocal
     el.volume = 1.0
     if (stream) {
       // Explicit play() — autoPlay alone is unreliable for unmuted media.
@@ -34,7 +36,7 @@ function PeerTile({
         }
       })
     }
-  }, [stream, name])
+  }, [stream, isLocal])
 
   return (
     <div
@@ -71,11 +73,11 @@ export default function ParticipantStrip() {
     <div className="shrink-0 border-b border-border/40 bg-muted/30 px-4 py-3 md:px-6">
       <div className="flex items-center justify-center gap-3 md:gap-4">
         <div className="relative flex flex-col items-center gap-1">
-          <PeerTile stream={localStream} name="You" />
+          <PeerTile stream={localStream} name="You" isLocal />
         </div>
         {remotePeers.map((peer: RemotePeer) => (
           <div key={peer.peerId} className="relative flex flex-col items-center gap-1">
-            <PeerTile stream={peer.stream} name={peer.userId} />
+            <PeerTile stream={peer.stream} name={peer.userId} isLocal={false} />
           </div>
         ))}
       </div>

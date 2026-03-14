@@ -9,6 +9,7 @@ import type { RemotePeer } from "@/hooks/use-webrtc"
 function VideoTile({
   stream,
   name,
+  isLocal = false,
   isSpeaking = false,
   mirror = false,
   size = "small",
@@ -16,6 +17,7 @@ function VideoTile({
 }: {
   stream?: MediaStream | null
   name: string
+  isLocal?: boolean
   isSpeaking?: boolean
   mirror?: boolean
   size?: "large" | "small"
@@ -27,9 +29,9 @@ function VideoTile({
     const el = videoRef.current
     if (!el) return
     el.srcObject = stream ?? null
-    // React's `muted` JSX prop does not reliably set the DOM property.
-    // Set it imperatively so remote peers are never accidentally muted.
-    el.muted = name === "You"
+    // Only mute our own feed — never mute remote peers.
+    // Do NOT use name === 'You': every peer may share the same display name.
+    el.muted = isLocal
     el.volume = 1.0
     if (stream) {
       // Explicit play() — autoPlay alone is unreliable for unmuted media.
@@ -42,7 +44,7 @@ function VideoTile({
         }
       })
     }
-  }, [stream, name])
+  }, [stream, isLocal])
 
   const nameClass =
     size === "large"
@@ -137,6 +139,7 @@ export default function MeetingStage() {
             <VideoTile
               stream={pinnedPeer.stream}
               name={pinnedPeer.userId}
+              isLocal={false}
               isSpeaking
               size="large"
             />
@@ -158,6 +161,7 @@ export default function MeetingStage() {
             <VideoTile
               stream={peer.stream}
               name={peer.userId}
+              isLocal={false}
               size="small"
               onClick={() => setPinnedPeerId(peer.peerId)}
             />
@@ -165,7 +169,7 @@ export default function MeetingStage() {
         ))}
         {/* Local camera — mirrored, always last */}
         <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-slate-800 ring-1 ring-border/30">
-          <VideoTile stream={localStream} name="You" size="small" mirror />
+          <VideoTile stream={localStream} name="You" isLocal size="small" mirror />
         </div>
       </div>
     </div>
