@@ -36,6 +36,7 @@ class SessionPipeline:
 
     async def handle_event(self, state: SessionState, event: InboundEvent) -> list[OutboundEvent]:
         outbound: list[OutboundEvent] = []
+        previous_mode = state.mode
 
         if isinstance(event, SessionStartEvent):
             if event.meeting_title:
@@ -62,60 +63,69 @@ class SessionPipeline:
             )
             return outbound
 
+        pre_generation_ran = False
+        if isinstance(event, (SpeechPartialEvent, SpeechFinalEvent)):
+            pre_trigger_text = self.transcript_buffer.unread_for_trigger(state)
+            pre_diagram_text = self.transcript_buffer.unread_for_diagram(state)
+            pre_decision = self.trigger_engine.should_generate_before_event(
+                state, event, pre_trigger_text
+            )
+            if pre_decision.should_generate:
+                outbound.extend(
+                    await self._generate_from_transcript(
+                        state=state,
+                        trigger_text=pre_trigger_text,
+                        diagram_text=pre_diagram_text,
+                    )
+                )
+                pre_generation_ran = True
+
         if isinstance(event, UICommandEvent):
             outbound.extend(self._handle_command(state, event))
             if event.command == "diagram.reset":
                 return outbound
 
-        if isinstance(event, (SpeechPartialEvent, SpeechFinalEvent)):
-            text = self.transcript_buffer.append(state, event.text)
+        if isinstance(event, SpeechPartialEvent):
+            text = self.transcript_buffer.append_partial(state, event.text)
             if text:
                 outbound.append(
                     TranscriptUpdateEvent(
                         text=text,
-                        is_final=isinstance(event, SpeechFinalEvent),
+                        is_final=False,
                     )
                 )
 
-        unread_text = self.transcript_buffer.unread_text(state)
-        decision = self.trigger_engine.should_generate(state, event, unread_text)
+        if isinstance(event, SpeechFinalEvent):
+            text = self.transcript_buffer.append_final(state, event.text)
+            if text:
+                outbound.append(
+                    TranscriptUpdateEvent(
+                        text=text,
+                        is_final=True,
+                    )
+                )
+
+        if pre_generation_ran:
+            return outbound
+
+        unread_trigger_text = self.transcript_buffer.unread_for_trigger(state)
+        unread_diagram_text = self.transcript_buffer.unread_for_diagram(state)
+        decision = self.trigger_engine.should_generate_after_event(
+            state,
+            event,
+            unread_trigger_text,
+            previous_mode=previous_mode,
+        )
         if not decision.should_generate:
             return outbound
 
-        intent = self.intent_classifier.classify(unread_text or state.raw_transcript)
-        await self.model_orchestrator.choose_path(intent)
-        outbound.append(IntentResultEvent(result=intent))
-
-        if intent.diagram_type == DiagramType.NONE:
-            self.trigger_engine.arm_cooldown(state)
-            return outbound
-
-        if not state.diagram.nodes or state.diagram.diagram_type != intent.diagram_type:
-            diagram = self.diagram_generator.generate_document(intent, state.raw_transcript)
-            diagram = self.render_adapter.layout_document(diagram)
-            state.diagram = diagram
-            state.diagram_type = diagram.diagram_type
-            self.transcript_buffer.mark_generated(state)
-            self.trigger_engine.arm_cooldown(state)
-            outbound.append(DiagramReplaceEvent(diagram=diagram))
-            return outbound
-
-        patch = self.diagram_generator.generate_patch(intent, unread_text, state.diagram)
-        if patch.ops:
-            state.diagram = self.render_adapter.apply_patch(state.diagram, patch)
-            state.diagram_type = state.diagram.diagram_type
-            self.transcript_buffer.mark_generated(state)
-            self.trigger_engine.arm_cooldown(state)
-            outbound.append(DiagramPatchEvent(patch=patch))
-            return outbound
-
-        diagram = self.diagram_generator.generate_document(intent, state.raw_transcript)
-        diagram = self.render_adapter.layout_document(diagram)
-        state.diagram = diagram
-        state.diagram_type = diagram.diagram_type
-        self.transcript_buffer.mark_generated(state)
-        self.trigger_engine.arm_cooldown(state)
-        outbound.append(DiagramReplaceEvent(diagram=diagram))
+        outbound.extend(
+            await self._generate_from_transcript(
+                state=state,
+                trigger_text=unread_trigger_text,
+                diagram_text=unread_diagram_text,
+            )
+        )
         return outbound
 
     def _handle_command(self, state: SessionState, event: UICommandEvent) -> list[OutboundEvent]:
@@ -139,9 +149,7 @@ class SessionPipeline:
         if event.command == "diagram.reset":
             state.diagram = DiagramDocument()
             state.diagram_type = DiagramType.NONE
-            state.raw_transcript = ""
-            state.last_generated_offset = 0
-            state.last_generation_at = 0.0
+            self.transcript_buffer.reset(state)
             outbound.append(
                 DiagramReplaceEvent(diagram=state.diagram)
             )
@@ -166,4 +174,51 @@ class SessionPipeline:
                 )
             )
 
+        return outbound
+
+    async def _generate_from_transcript(
+        self,
+        state: SessionState,
+        trigger_text: str,
+        diagram_text: str,
+    ) -> list[OutboundEvent]:
+        outbound: list[OutboundEvent] = []
+        intent = self.intent_classifier.classify(trigger_text or state.raw_transcript)
+        await self.model_orchestrator.choose_path(intent)
+        outbound.append(IntentResultEvent(result=intent))
+
+        if intent.diagram_type == DiagramType.NONE:
+            self.transcript_buffer.mark_triggered(state)
+            self.trigger_engine.arm_cooldown(state)
+            return outbound
+
+        if not state.diagram.nodes or state.diagram.diagram_type != intent.diagram_type:
+            diagram = self.diagram_generator.generate_document(intent, state.raw_transcript)
+            diagram = self.render_adapter.layout_document(diagram)
+            state.diagram = diagram
+            state.diagram_type = diagram.diagram_type
+            self.transcript_buffer.mark_triggered(state)
+            self.transcript_buffer.mark_generated(state)
+            self.trigger_engine.arm_cooldown(state)
+            outbound.append(DiagramReplaceEvent(diagram=diagram))
+            return outbound
+
+        patch = self.diagram_generator.generate_patch(intent, diagram_text, state.diagram)
+        if patch.ops:
+            state.diagram = self.render_adapter.apply_patch(state.diagram, patch)
+            state.diagram_type = state.diagram.diagram_type
+            self.transcript_buffer.mark_triggered(state)
+            self.transcript_buffer.mark_generated(state)
+            self.trigger_engine.arm_cooldown(state)
+            outbound.append(DiagramPatchEvent(patch=patch))
+            return outbound
+
+        diagram = self.diagram_generator.generate_document(intent, state.raw_transcript)
+        diagram = self.render_adapter.layout_document(diagram)
+        state.diagram = diagram
+        state.diagram_type = diagram.diagram_type
+        self.transcript_buffer.mark_triggered(state)
+        self.transcript_buffer.mark_generated(state)
+        self.trigger_engine.arm_cooldown(state)
+        outbound.append(DiagramReplaceEvent(diagram=diagram))
         return outbound

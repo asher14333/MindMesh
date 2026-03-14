@@ -16,6 +16,8 @@ class SessionState(BaseModel):
     mode: SessionMode = SessionMode.STANDBY
     diagram_type: DiagramType = DiagramType.NONE
     raw_transcript: str = ""
+    partial_transcript: str = ""
+    last_triggered_offset: int = 0
     last_generated_offset: int = 0
     last_chunk_at: float = 0.0
     last_generation_at: float = 0.0

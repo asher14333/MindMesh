@@ -11,9 +11,9 @@ Tests the full demo scenario:
   1. Connect → receive initial status
   2. Send session.start
   3. Send transcript while in standby (should NOT trigger generation)
-  4. Send visualize.toggle → enable visualizing mode
-  5. Send transcript → should trigger intent + diagram.replace
-  6. Send more transcript → should trigger diagram.patch
+  4. Send visualize.toggle → enable visualizing mode and flush unread backlog once
+  5. Send transcript after cooldown → should trigger another diagram update
+  6. Send more transcript → should trigger another diagram update
   7. Send diagram.reset command
   8. Send session.stop
 """
@@ -78,32 +78,49 @@ async def main() -> None:
             pretty("RECV: standby transcript", msg)
             assert msg["type"] != "diagram.replace", "Should NOT generate in standby"
 
-        # --- 4. Enable visualizing mode ---
+        # --- 4. Enable visualizing mode + flush any standby backlog once ---
         await ws.send(json.dumps({
             "type": "ui.command",
             "command": "visualize.toggle",
             "payload": {"enabled": True},
         }))
-        for msg in await receive_all_pending(ws):
+        messages = await receive_all_pending(ws, timeout=2.0)
+        types_seen = [m["type"] for m in messages]
+        for msg in messages:
             pretty("RECV: after visualize.toggle", msg)
+        assert "status" in types_seen, f"Expected status after toggle, got {types_seen}"
+        assert "intent.result" in types_seen, f"Expected backlog flush intent, got {types_seen}"
+        has_diagram = "diagram.replace" in types_seen or "diagram.patch" in types_seen
+        assert has_diagram, f"Expected backlog flush diagram event, got {types_seen}"
 
-        # --- 5. First transcript in visualizing mode → diagram.replace ---
-        print("\n[visualizing mode] Sending transcript — expect intent.result + diagram.replace")
+        # Cooldown is armed by the backlog flush above, so wait briefly before the next auto trigger.
+        await asyncio.sleep(1.1)
+
+        # --- 5. Next transcript in visualizing mode → diagram update ---
+        print("\n[visualizing mode] Sending transcript — expect transcript.update + intent.result + diagram event")
         await ws.send(json.dumps({"type": "speech.final", "text": TRANSCRIPT_LINES[1]}))
         messages = await receive_all_pending(ws, timeout=2.0)
         types_seen = [m["type"] for m in messages]
         for msg in messages:
             pretty(f"RECV: {msg['type']}", msg)
+        assert "transcript.update" in types_seen, f"Expected transcript.update, got {types_seen}"
         assert "intent.result" in types_seen, f"Expected intent.result, got {types_seen}"
         has_diagram = "diagram.replace" in types_seen or "diagram.patch" in types_seen
         assert has_diagram, f"Expected diagram event, got {types_seen}"
 
-        # --- 6. Second transcript → diagram.patch ---
-        print("\n[visualizing mode] Sending more transcript — expect diagram.patch")
+        await asyncio.sleep(1.1)
+
+        # --- 6. Second transcript → another diagram update ---
+        print("\n[visualizing mode] Sending more transcript — expect another diagram event")
         await ws.send(json.dumps({"type": "speech.final", "text": TRANSCRIPT_LINES[2]}))
         messages = await receive_all_pending(ws, timeout=2.0)
+        types_seen = [m["type"] for m in messages]
         for msg in messages:
             pretty(f"RECV: {msg['type']}", msg)
+        assert "transcript.update" in types_seen, f"Expected transcript.update, got {types_seen}"
+        assert "intent.result" in types_seen, f"Expected intent.result, got {types_seen}"
+        has_diagram = "diagram.replace" in types_seen or "diagram.patch" in types_seen
+        assert has_diagram, f"Expected diagram event, got {types_seen}"
 
         # --- 7. Manual generate command ---
         await ws.send(json.dumps({
@@ -111,8 +128,10 @@ async def main() -> None:
             "command": "visualize.generate",
             "payload": {},
         }))
-        for msg in await receive_all_pending(ws, timeout=2.0):
+        messages = await receive_all_pending(ws, timeout=2.0)
+        for msg in messages:
             pretty(f"RECV: manual generate → {msg['type']}", msg)
+        assert not messages, "Manual generate should be a no-op without unread committed transcript"
 
         # --- 8. diagram.reset ---
         await ws.send(json.dumps({
