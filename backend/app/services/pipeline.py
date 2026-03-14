@@ -85,11 +85,17 @@ class SessionPipeline:
             text = self.transcript_buffer.append(state, event.text)
             kind = "FINAL  " if isinstance(event, SpeechFinalEvent) else "partial"
             if text:
+<<<<<<< Updated upstream
+                speaker_label = f" [{event.speaker}]" if event.speaker else ""
+                logger.info("[%s] speech.%s%s | %r", state.session_id, kind, speaker_label, text)
+=======
                 logger.info("[%s] speech.%s | %r", state.session_id, kind, text)
+>>>>>>> Stashed changes
                 outbound.append(
                     TranscriptUpdateEvent(
                         text=text,
                         is_final=isinstance(event, SpeechFinalEvent),
+                        speaker=event.speaker,
                     )
                 )
 
