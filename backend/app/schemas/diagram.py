@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -21,7 +21,7 @@ class DiagramNode(BaseModel):
     id: str
     label: str
     kind: str = "step"
-    status: str | None = None
+    status: Optional[str] = None
     position: Position = Field(default_factory=lambda: Position(x=0, y=0))
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -30,7 +30,7 @@ class DiagramEdge(BaseModel):
     id: str
     source: str
     target: str
-    label: str | None = None
+    label: Optional[str] = None
 
 
 class DiagramDocument(BaseModel):
@@ -56,4 +56,4 @@ class DiagramPatch(BaseModel):
     diagram_type: DiagramType
     ops: list[PatchOp] = Field(default_factory=list)
     version: int = 0
-    reason: str | None = None
+    reason: Optional[str] = None

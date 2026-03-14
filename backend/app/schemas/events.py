@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -9,7 +9,7 @@ from app.state.session_state import SessionMode
 
 class SessionStartEvent(BaseModel):
     type: Literal["session.start"]
-    meeting_title: str | None = None
+    meeting_title: Optional[str] = None
 
 
 class SessionStopEvent(BaseModel):
@@ -32,9 +32,13 @@ class UICommandEvent(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
-InboundEvent = (
-    SessionStartEvent | SessionStopEvent | SpeechPartialEvent | SpeechFinalEvent | UICommandEvent
-)
+InboundEvent = Union[
+    SessionStartEvent,
+    SessionStopEvent,
+    SpeechPartialEvent,
+    SpeechFinalEvent,
+    UICommandEvent,
+]
 
 
 class TranscriptUpdateEvent(BaseModel):
@@ -63,16 +67,16 @@ class StatusEvent(BaseModel):
     session_id: str
     mode: SessionMode
     message: str
-    diagram_type: DiagramType | None = None
+    diagram_type: Optional[DiagramType] = None
 
 
-OutboundEvent = (
-    TranscriptUpdateEvent
-    | IntentResultEvent
-    | DiagramPatchEvent
-    | DiagramReplaceEvent
-    | StatusEvent
-)
+OutboundEvent = Union[
+    TranscriptUpdateEvent,
+    IntentResultEvent,
+    DiagramPatchEvent,
+    DiagramReplaceEvent,
+    StatusEvent,
+]
 
 
 def parse_inbound_event(payload: dict[str, Any]) -> InboundEvent:

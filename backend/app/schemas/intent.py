@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -15,4 +16,4 @@ class IntentResult(BaseModel):
     diagram_type: DiagramType
     confidence: float
     action: IntentAction
-    reason: str | None = None
+    reason: Optional[str] = None

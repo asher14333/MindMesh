@@ -1,4 +1,5 @@
 import time
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -9,7 +10,7 @@ from app.state.session_state import SessionMode, SessionState
 
 class TriggerDecision(BaseModel):
     should_generate: bool
-    reason: str | None = None
+    reason: Optional[str] = None
 
 
 class TriggerEngine:
