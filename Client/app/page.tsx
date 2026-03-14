@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { WebRTCProvider } from "@/hooks/webrtc-context"
+import { useSpeech } from "@/hooks/use-speech"
 import MeetingBar from "@/components/meeting-bar"
 import MeetingBarStandby from "@/components/meeting-bar-standby"
 import ParticipantStrip from "@/components/participant-strip"
@@ -11,10 +12,16 @@ import MeetingStage from "@/components/meeting-stage"
 import MeetingDockStandby from "@/components/meeting-dock-standby"
 
 const ROOM_ID = "demo-room"
+const SESSION_ID = "demo-session"
 
 export default function MindMeshDemo() {
   const [mindMeshActive, setMindMeshActive] = useState(false)
   const [callEnded, setCallEnded] = useState(false)
+
+  // Active on both standby and MindMesh views — logs speech to the browser
+  // console and pipes transcripts to the backend diagram pipeline.
+  // Diagram generation is only enabled when mindMeshActive is true.
+  useSpeech(SESSION_ID, !callEnded, mindMeshActive)
 
   if (callEnded) {
     return (
