@@ -3,7 +3,7 @@
 ## Summary
 
 Implement a bounded, low-latency backend pipeline that converts triggered transcript deltas into stable, versioned diagram updates for React Flow. The backend will use a hybrid rules-first plus model-fallback intent path, maintain a sticky per-session diagram scope after the first strong classification, generate semantic facts instead of UI primitives from AI, and deterministically convert those facts into `diagram.replace` and `diagram.patch` events with stable IDs, monotonic versions, and server-owned layout.
-
+#
 Demo target:
 
 - one excellent `flowchart` path
