@@ -3,6 +3,7 @@
 import { Mic, MicOff, Video, VideoOff, Monitor, MoreHorizontal, PhoneOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useWebRTCContext } from "@/hooks/webrtc-context"
+import { useMindMesh } from "@/lib/mindmesh/store"
 
 interface MeetingDockProps {
   onLeave?: () => void
@@ -10,6 +11,23 @@ interface MeetingDockProps {
 
 export default function MeetingDock({ onLeave }: MeetingDockProps) {
   const { isMuted, isCameraOn, toggleMic, toggleCamera, leaveCall } = useWebRTCContext()
+  const { state, connectionState } = useMindMesh()
+
+  const pill = (() => {
+    if (connectionState !== "open") {
+      return {
+        dot: connectionState === "error" ? "bg-red-500" : "bg-amber-500",
+        text: `MindMesh ${connectionState}`,
+      }
+    }
+    if (state.desynced) {
+      return { dot: "bg-amber-500", text: `MindMesh resyncing (v${state.version})` }
+    }
+    return {
+      dot: "bg-emerald-500",
+      text: `${state.mode === "visualizing" ? "MindMesh live" : "MindMesh standby"} (${state.diagramType} v${state.version})`,
+    }
+  })()
 
   function handleLeave() {
     leaveCall()
@@ -74,8 +92,8 @@ export default function MeetingDock({ onLeave }: MeetingDockProps) {
 
       {/* MindMesh status pill */}
       <div className="flex items-center gap-1.5 rounded-full border border-border/50 bg-card/90 px-3 py-1.5 shadow-sm backdrop-blur-sm">
-        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
-        <span className="text-[11px] font-medium text-muted-foreground">MindMesh generating</span>
+        <span className={`h-1.5 w-1.5 animate-pulse rounded-full ${pill.dot}`} />
+        <span className="text-[11px] font-medium text-muted-foreground">{pill.text}</span>
       </div>
     </div>
   )

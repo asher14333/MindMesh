@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Plus_Jakarta_Sans } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
+import "@xyflow/react/dist/style.css"
 import './globals.css'
 
 const plusJakarta = Plus_Jakarta_Sans({ 
