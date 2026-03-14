@@ -1,17 +1,10 @@
-<<<<<<< Updated upstream
-=======
 import asyncio
->>>>>>> Stashed changes
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.session_manager import SessionManager
-<<<<<<< Updated upstream
-from app.schemas.events import ErrorEvent, StatusEvent, parse_inbound_event
-=======
 from app.schemas.events import ErrorEvent, StatusEvent, UICommandEvent, parse_inbound_event
->>>>>>> Stashed changes
 from app.services.pipeline import SessionPipeline
 
 logger = logging.getLogger(__name__)
@@ -75,32 +68,6 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
 
     try:
         while True:
-<<<<<<< Updated upstream
-            try:
-                payload = await websocket.receive_json()
-            except Exception:
-                await websocket.send_json(
-                    ErrorEvent(message="invalid JSON — expected a JSON object").model_dump(mode="json")
-                )
-                continue
-
-            try:
-                event = parse_inbound_event(payload)
-            except (ValueError, KeyError) as exc:
-                await websocket.send_json(
-                    ErrorEvent(message=f"unknown or malformed event: {exc}").model_dump(mode="json")
-                )
-                continue
-
-            try:
-                async with session_manager.session_lock(session_id):
-                    state = await session_manager.get_or_create(session_id=session_id)
-                    outbound_events = await pipeline.handle_event(state=state, event=event)
-            except Exception as exc:
-                logger.exception("pipeline error for session %s", session_id)
-                await websocket.send_json(
-                    ErrorEvent(message=f"pipeline error: {exc}").model_dump(mode="json")
-=======
             # --- receive ---
             try:
                 payload = await websocket.receive_json()
@@ -112,10 +79,9 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
             # --- parse ---
             try:
                 event = parse_inbound_event(payload)
-            except Exception as exc:
+            except (ValueError, KeyError) as exc:
                 await websocket.send_json(
-                    ErrorEvent(message=f"Invalid event: {exc}").model_dump(mode="json")
->>>>>>> Stashed changes
+                    ErrorEvent(message=f"unknown or malformed event: {exc}").model_dump(mode="json")
                 )
                 continue
 
