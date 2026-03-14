@@ -70,12 +70,18 @@ class StatusEvent(BaseModel):
     diagram_type: Optional[DiagramType] = None
 
 
+class ErrorEvent(BaseModel):
+    type: Literal["error"] = "error"
+    message: str
+
+
 OutboundEvent = Union[
     TranscriptUpdateEvent,
     IntentResultEvent,
     DiagramPatchEvent,
     DiagramReplaceEvent,
     StatusEvent,
+    ErrorEvent,
 ]
 
 

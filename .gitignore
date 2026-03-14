@@ -1,0 +1,114 @@
+# ─── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+wheels/
+pip-wheel-metadata/
+*.manifest
+*.spec
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# PyInstaller
+*.spec
+
+# Unit test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.cover
+.hypothesis/
+nosetests.xml
+
+# mypy / pyright / ruff cache
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pytype/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ─── Environment / Secrets ──────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.local
+
+# ─── Node / Next.js ─────────────────────────────────────────────────────────
+node_modules/
+.next/
+.nuxt/
+out/
+dist/
+
+# Build output
+.vercel/
+.netlify/
+
+# v0 internals
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx-dev-runtime.ts
+.snowflake/
+.v0-trash/
+next.user-config.*
+.npmrc
+
+# pnpm
+.pnpm-store/
+.pnpm-debug.log*
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# ─── macOS ──────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.AppleDouble
+.LSOverride
+Icon?
+
+# ─── IDE / Editor ───────────────────────────────────────────────────────────
+.vscode/settings.json
+.vscode/launch.json
+.idea/
+*.swp
+*.swo
+*.swn
+*~
+
+# ─── MindMesh specific ──────────────────────────────────────────────────────
+# SQLite databases (if added later)
+*.db
+*.sqlite
+*.sqlite3

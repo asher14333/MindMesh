@@ -1,17 +1,14 @@
 "use client"
 
-import { Share2, Sparkles } from "lucide-react"
+import { Share2, Sparkles, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
-
-const participants = [
-  { name: "Sarah Chen", initials: "SC", color: "bg-sky-600" },
-  { name: "Marcus Johnson", initials: "MJ", color: "bg-slate-700" },
-  { name: "Elena Rodriguez", initials: "ER", color: "bg-teal-600" },
-  { name: "David Kim", initials: "DK", color: "bg-indigo-600" },
-  { name: "Rachel Park", initials: "RP", color: "bg-rose-600" },
-]
+import { useWebRTCContext } from "@/hooks/webrtc-context"
 
 export default function MeetingBar() {
+  const { remotePeers, isConnected } = useWebRTCContext()
+  // +1 for local "You"
+  const participantCount = remotePeers.length + 1
+
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-border/60 bg-card px-4 md:px-6">
       {/* Left section: Logo + Meeting title */}
@@ -63,19 +60,14 @@ export default function MeetingBar() {
       {/* Right section: Participants + AI badge + Share */}
       <div className="flex items-center gap-3 md:gap-4">
         {/* Participants */}
-        <div className="hidden items-center sm:flex">
-          <div className="flex -space-x-2">
-            {participants.map((participant, index) => (
-              <div
-                key={participant.name}
-                className={`flex h-7 w-7 items-center justify-center rounded-full ${participant.color} text-[10px] font-medium text-white ring-2 ring-card`}
-                style={{ zIndex: participants.length - index }}
-                title={participant.name}
-              >
-                {participant.initials}
-              </div>
-            ))}
-          </div>
+        <div className="hidden items-center gap-1.5 sm:flex">
+          <Users className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-xs text-muted-foreground">
+            {participantCount} {participantCount === 1 ? "participant" : "participants"}
+          </span>
+          {isConnected && (
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" title="Connected" />
+          )}
         </div>
 
         {/* AI Badge */}
