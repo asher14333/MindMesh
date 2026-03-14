@@ -1,27 +1,40 @@
 "use client"
 
-import { useState } from "react"
+import dynamic from "next/dynamic"
+import { useRef, useState } from "react"
 import { WebRTCProvider } from "@/hooks/webrtc-context"
 import { useSpeech } from "@/hooks/use-speech"
 import MeetingBar from "@/components/meeting-bar"
 import MeetingBarStandby from "@/components/meeting-bar-standby"
 import ParticipantStrip from "@/components/participant-strip"
-import ProcessCanvas from "@/components/process-canvas"
 import MeetingDock from "@/components/meeting-dock"
 import MeetingStage from "@/components/meeting-stage"
 import MeetingDockStandby from "@/components/meeting-dock-standby"
+import { MindMeshProvider } from "@/lib/mindmesh/store"
+
+const ProcessCanvas = dynamic(() => import("@/components/process-canvas"), {
+  ssr: false,
+})
+
+function createSessionId() {
+  // Stable per-tab session id (in-memory). Helps avoid cross-tab conflicts while still
+  // keeping a consistent session across re-renders.
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID()
+  return `mm-${Math.random().toString(16).slice(2)}-${Date.now().toString(16)}`
+}
 
 const ROOM_ID = "demo-room"
-const SESSION_ID = "demo-session"
+const MEETING_TITLE = "Enterprise Customer Onboarding Approval Flow"
 
 export default function MindMeshDemo() {
   const [mindMeshActive, setMindMeshActive] = useState(false)
   const [callEnded, setCallEnded] = useState(false)
+  const sessionIdRef = useRef<string>(createSessionId())
 
   // Active on both standby and MindMesh views — logs speech to the browser
   // console and pipes transcripts to the backend diagram pipeline.
   // Diagram generation is only enabled when mindMeshActive is true.
-  useSpeech(SESSION_ID, !callEnded, mindMeshActive)
+  useSpeech(sessionIdRef.current, !callEnded, mindMeshActive)
 
   if (callEnded) {
     return (
@@ -51,14 +64,16 @@ export default function MindMeshDemo() {
           </main>
         </div>
       ) : (
-        <div className="flex h-screen flex-col bg-background">
-          <MeetingBar />
-          <ParticipantStrip />
-          <main className="relative flex-1 overflow-hidden">
-            <ProcessCanvas />
-            <MeetingDock onLeave={() => setCallEnded(true)} />
-          </main>
-        </div>
+        <MindMeshProvider sessionId={sessionIdRef.current} meetingTitle={MEETING_TITLE}>
+          <div className="flex h-screen flex-col bg-background">
+            <MeetingBar />
+            <ParticipantStrip />
+            <main className="relative flex-1 overflow-hidden">
+              <ProcessCanvas />
+              <MeetingDock onLeave={() => setCallEnded(true)} />
+            </main>
+          </div>
+        </MindMeshProvider>
       )}
     </WebRTCProvider>
   )

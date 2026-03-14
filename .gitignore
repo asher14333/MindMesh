@@ -78,6 +78,7 @@ next.user-config.*
 # pnpm
 .pnpm-store/
 .pnpm-debug.log*
+*.tsbuildinfo
 
 # Logs
 npm-debug.log*
