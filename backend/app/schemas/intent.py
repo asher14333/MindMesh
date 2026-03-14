@@ -12,8 +12,16 @@ class IntentAction(str, Enum):
     NOOP = "noop"
 
 
+class ScopeRelation(str, Enum):
+    IN_SCOPE = "in_scope"
+    OUT_OF_SCOPE = "out_of_scope"
+    CORRECTION = "correction"
+    SWITCH_CANDIDATE = "switch_candidate"
+
+
 class IntentResult(BaseModel):
     diagram_type: DiagramType
     confidence: float
     action: IntentAction
     reason: Optional[str] = None
+    scope_relation: ScopeRelation = ScopeRelation.IN_SCOPE
