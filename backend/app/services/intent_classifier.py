@@ -1,76 +1,222 @@
 import re
+from typing import Optional
 
 from app.schemas.diagram import DiagramType
-from app.schemas.intent import IntentAction, IntentResult
+from app.schemas.intent import IntentAction, IntentResult, ScopeRelation
+from app.state.session_state import SessionState
 
 
 class IntentClassifier:
-    FLOW_WORDS = {"first", "then", "after", "before", "finally", "next", "step"}
-    TIMELINE_WORDS = {
-        "january",
-        "february",
-        "march",
-        "april",
-        "may",
-        "june",
-        "july",
-        "august",
-        "september",
-        "october",
-        "november",
-        "december",
-        "today",
-        "tomorrow",
-        "quarter",
+    FLOW_WORDS = {
+        "first", "then", "after", "before", "finally", "next", "step",
+        "process", "flow", "sequence", "proceed", "followed by", "leads to",
+        "starts with", "ends with", "begins", "continues", "results in",
+        "workflow", "pipeline", "handoff", "hands off", "moves to",
     }
-    MINDMAP_WORDS = {"types", "categories", "themes", "ideas", "areas"}
-    ORG_WORDS = {"reports to", "manager", "lead", "team", "owner"}
+    FLOW_STRONG = {
+        "process", "flow", "workflow", "pipeline", "sequence", "step by step",
+    }
 
-    def classify(self, text: str) -> IntentResult:
+    TIMELINE_WORDS = {
+        "january", "february", "march", "april", "may", "june",
+        "july", "august", "september", "october", "november", "december",
+        "today", "tomorrow", "yesterday", "quarter", "q1", "q2", "q3", "q4",
+        "deadline", "milestone", "phase", "sprint", "week", "month", "year",
+    }
+    TIMELINE_STRONG = {
+        "timeline", "schedule", "roadmap", "deadline", "milestone",
+    }
+
+    MINDMAP_WORDS = {
+        "types", "categories", "themes", "ideas", "areas", "topics",
+        "aspects", "factors", "brainstorm", "concepts", "dimensions",
+        "pillars", "domains", "branches", "subtopics",
+    }
+    MINDMAP_STRONG = {
+        "brainstorm", "mind map", "mindmap", "categorize", "themes",
+    }
+
+    ORG_WORDS = {
+        "reports to", "manager", "lead", "team", "owner", "direct report",
+        "supervisor", "department", "hierarchy", "organization", "manages",
+        "head of", "director", "vp", "ceo", "cto",
+    }
+    ORG_STRONG = {
+        "reports to", "hierarchy", "org chart", "orgchart",
+        "organization chart", "reporting structure",
+    }
+
+    CORRECTION_PATTERNS = [
+        r"\bactually\b", r"\bno[,.]?\s", r"\bwait\b", r"\binstead\b",
+        r"\bcorrection\b", r"\bsorry\b", r"\bi meant\b", r"\bnot that\b",
+        r"\bchange that\b", r"\bshould be\b", r"\brather\b",
+    ]
+
+    FILLER_PATTERNS = [
+        r"^(um+|uh+|ah+|er+|hmm+|like|you know|so|okay|ok|right|"
+        r"yeah|yes|no|mhm)[\s.,!?]*$",
+    ]
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def classify(
+        self, text: str, state: Optional[SessionState] = None
+    ) -> IntentResult:
         normalized = re.sub(r"\s+", " ", text.lower()).strip()
-        if not normalized:
+
+        if not normalized or self._is_filler(normalized):
             return IntentResult(
-                diagram_type=DiagramType.NONE,
+                diagram_type=(
+                    state.locked_diagram_type
+                    if state and state.locked_diagram_type
+                    else DiagramType.NONE
+                ),
                 confidence=0.0,
                 action=IntentAction.NOOP,
-                reason="empty_buffer",
+                reason="empty_or_filler",
+                scope_relation=ScopeRelation.OUT_OF_SCOPE,
             )
 
-        if any(word in normalized for word in self.ORG_WORDS):
+        is_correction = any(
+            re.search(p, normalized) for p in self.CORRECTION_PATTERNS
+        )
+
+        scores = {
+            DiagramType.FLOWCHART: self._score(
+                normalized, self.FLOW_WORDS, self.FLOW_STRONG
+            ),
+            DiagramType.ORGCHART: self._score(
+                normalized, self.ORG_WORDS, self.ORG_STRONG
+            ),
+            DiagramType.TIMELINE: self._score(
+                normalized, self.TIMELINE_WORDS, self.TIMELINE_STRONG
+            ),
+            DiagramType.MINDMAP: self._score(
+                normalized, self.MINDMAP_WORDS, self.MINDMAP_STRONG
+            ),
+        }
+
+        best_type = max(scores, key=lambda k: scores[k])
+        best_score = scores[best_type]
+
+        if best_score == 0:
+            locked = (
+                state.locked_diagram_type
+                if state and state.locked_diagram_type
+                else None
+            )
+            if is_correction and locked and locked != DiagramType.NONE:
+                return IntentResult(
+                    diagram_type=locked,
+                    confidence=0.60,
+                    action=IntentAction.UPDATE,
+                    reason="correction_detected",
+                    scope_relation=ScopeRelation.CORRECTION,
+                )
             return IntentResult(
-                diagram_type=DiagramType.ORGCHART,
-                confidence=0.74,
-                action=IntentAction.UPDATE,
-                reason="org_keywords",
+                diagram_type=locked or DiagramType.FLOWCHART,
+                confidence=0.35,
+                action=IntentAction.NOOP,
+                reason="no_diagram_keywords",
+                scope_relation=ScopeRelation.OUT_OF_SCOPE,
             )
 
-        if any(word in normalized for word in self.TIMELINE_WORDS):
-            return IntentResult(
-                diagram_type=DiagramType.TIMELINE,
-                confidence=0.8,
-                action=IntentAction.UPDATE,
-                reason="timeline_keywords",
-            )
+        confidence = min(0.95, 0.55 + best_score * 0.12)
 
-        if any(word in normalized for word in self.MINDMAP_WORDS):
-            return IntentResult(
-                diagram_type=DiagramType.MINDMAP,
-                confidence=0.72,
-                action=IntentAction.UPDATE,
-                reason="mindmap_keywords",
-            )
+        scope_relation = ScopeRelation.IN_SCOPE
+        if is_correction:
+            scope_relation = ScopeRelation.CORRECTION
+        elif (
+            state
+            and state.locked_diagram_type
+            and state.locked_diagram_type != DiagramType.NONE
+        ):
+            if best_type != state.locked_diagram_type and best_score >= 2:
+                scope_relation = ScopeRelation.SWITCH_CANDIDATE
+            elif best_type != state.locked_diagram_type:
+                scope_relation = ScopeRelation.OUT_OF_SCOPE
+                best_type = state.locked_diagram_type
 
-        if any(word in normalized for word in self.FLOW_WORDS):
-            return IntentResult(
-                diagram_type=DiagramType.FLOWCHART,
-                confidence=0.85,
-                action=IntentAction.UPDATE,
-                reason="flow_keywords",
-            )
+        action = IntentAction.UPDATE
+        if is_correction:
+            action = IntentAction.REPLACE if best_score >= 3 else IntentAction.UPDATE
+        elif confidence < 0.65:
+            action = IntentAction.NOOP
 
         return IntentResult(
-            diagram_type=DiagramType.FLOWCHART,
-            confidence=0.55,
-            action=IntentAction.UPDATE,
-            reason="flow_default",
+            diagram_type=best_type,
+            confidence=confidence,
+            action=action,
+            reason=(
+                "correction_detected"
+                if is_correction
+                else f"{best_type.value}_keywords"
+            ),
+            scope_relation=scope_relation,
         )
+
+    def choose_route(self, intent: IntentResult, state: SessionState) -> str:
+        """Return one of 'fast', 'fallback', 'repair', 'noop'."""
+        if intent.scope_relation == ScopeRelation.OUT_OF_SCOPE:
+            return "noop"
+        if intent.scope_relation == ScopeRelation.CORRECTION:
+            return "repair"
+        if intent.confidence >= 0.85:
+            return "fast"
+        if intent.confidence < 0.65:
+            return "fallback"
+        if intent.scope_relation == ScopeRelation.SWITCH_CANDIDATE:
+            return "fallback"
+        if not state.locked_diagram_type or state.locked_diagram_type == DiagramType.NONE:
+            return "fallback"
+        return "fast"
+
+    def update_scope_lock(
+        self, state: SessionState, intent: IntentResult
+    ) -> None:
+        if intent.action == IntentAction.NOOP:
+            return
+
+        if (
+            not state.locked_diagram_type
+            or state.locked_diagram_type == DiagramType.NONE
+        ):
+            if intent.confidence >= 0.85:
+                state.locked_diagram_type = intent.diagram_type
+                state.scope_summary = state.meeting_title
+                state.switch_streak = 0
+            elif intent.confidence >= 0.65:
+                if state.switch_streak >= 1:
+                    state.locked_diagram_type = intent.diagram_type
+                    state.switch_streak = 0
+                else:
+                    state.switch_streak += 1
+            return
+
+        if intent.scope_relation == ScopeRelation.SWITCH_CANDIDATE:
+            if intent.diagram_type != state.locked_diagram_type:
+                state.switch_streak += 1
+                if state.switch_streak >= 2 and intent.confidence >= 0.74:
+                    state.locked_diagram_type = intent.diagram_type
+                    state.switch_streak = 0
+        elif intent.scope_relation == ScopeRelation.IN_SCOPE:
+            state.switch_streak = 0
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _score(self, text: str, words: set[str], strong: set[str]) -> int:
+        score = 0
+        for w in words:
+            if w in text:
+                score += 1
+        for w in strong:
+            if w in text:
+                score += 2
+        return score
+
+    def _is_filler(self, text: str) -> bool:
+        return any(re.match(p, text, re.IGNORECASE) for p in self.FILLER_PATTERNS)

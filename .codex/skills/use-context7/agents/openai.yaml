@@ -1,0 +1,7 @@
+interface:
+  display_name: "Use Context7"
+  short_description: "Docs-first library and API guidance"
+  default_prompt: "Use $use-context7 to fetch authoritative library or API docs before implementing setup, configuration, or generated code."
+
+policy:
+  allow_implicit_invocation: true
