@@ -20,17 +20,26 @@ export interface WebRTCState {
   localStream: MediaStream | null
   remotePeers: RemotePeer[]
   isConnected: boolean
+  isMuted: boolean
+  isCameraOn: boolean
   error: string | null
+  toggleMic: () => void
+  toggleCamera: () => void
+  leaveCall: () => void
 }
 
 export function useWebRTC(roomId: string, userId: string = "You"): WebRTCState {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const [remotePeers, setRemotePeers] = useState<RemotePeer[]>([])
   const [isConnected, setIsConnected] = useState(false)
+  const [isMuted, setIsMuted] = useState(false)
+  const [isCameraOn, setIsCameraOn] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   // peer_id → RTCPeerConnection
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map())
+  // peer_id → MediaStream — accumulate tracks here so audio+video land in one stream
+  const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map())
   const wsRef = useRef<WebSocket | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
   const myPeerIdRef = useRef<string | null>(null)
@@ -50,6 +59,7 @@ export function useWebRTC(roomId: string, userId: string = "You"): WebRTCState {
     setRemotePeers((prev) => prev.filter((p) => p.peerId !== peerId))
     const pc = pcsRef.current.get(peerId)
     if (pc) { pc.close(); pcsRef.current.delete(peerId) }
+    remoteStreamsRef.current.delete(peerId)
   }, [])
 
   const relay = useCallback((to: string, data: object) => {
@@ -60,14 +70,33 @@ export function useWebRTC(roomId: string, userId: string = "You"): WebRTCState {
     (remotePeerId: string): RTCPeerConnection => {
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
 
+      // Ensure a dedicated MediaStream exists for this peer
+      if (!remoteStreamsRef.current.has(remotePeerId)) {
+        remoteStreamsRef.current.set(remotePeerId, new MediaStream())
+      }
+
       pc.onicecandidate = (e) => {
         if (e.candidate) relay(remotePeerId, { type: "ice-candidate", candidate: e.candidate })
       }
 
       pc.ontrack = (e) => {
-        const stream = e.streams[0] ?? new MediaStream([e.track])
+        // Always add to the peer's dedicated stream — this handles the case where
+        // audio and video arrive as separate ontrack events (e.streams[0] may differ)
+        const peerStream = remoteStreamsRef.current.get(remotePeerId)!
+        e.track.onunmute = () => {
+          if (!peerStream.getTracks().includes(e.track)) {
+            peerStream.addTrack(e.track)
+          }
+          setRemotePeers((prev) =>
+            prev.map((p) => p.peerId === remotePeerId ? { ...p, stream: peerStream } : p)
+          )
+        }
+        // Also fire immediately — some tracks arrive already unmuted
+        if (!peerStream.getTracks().includes(e.track)) {
+          peerStream.addTrack(e.track)
+        }
         setRemotePeers((prev) =>
-          prev.map((p) => p.peerId === remotePeerId ? { ...p, stream } : p)
+          prev.map((p) => p.peerId === remotePeerId ? { ...p, stream: peerStream } : p)
         )
       }
 
@@ -86,14 +115,27 @@ export function useWebRTC(roomId: string, userId: string = "You"): WebRTCState {
     let cancelled = false
 
     async function start() {
-      // 1. Get local media (camera + mic)
+      // 1. Get local media — request audio with echo/noise suppression
       let stream: MediaStream | null = null
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        })
       } catch {
         // Fallback: audio-only
         try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          })
         } catch {
           setError("Camera/microphone permission denied")
         }
@@ -182,6 +224,7 @@ export function useWebRTC(roomId: string, userId: string = "You"): WebRTCState {
       wsRef.current = null
       pcsRef.current.forEach((pc) => pc.close())
       pcsRef.current.clear()
+      remoteStreamsRef.current.clear()
       localStreamRef.current?.getTracks().forEach((t) => t.stop())
       localStreamRef.current = null
       setLocalStream(null)
@@ -190,5 +233,32 @@ export function useWebRTC(roomId: string, userId: string = "You"): WebRTCState {
     }
   }, [roomId, userId, createPeerConnection, upsertRemotePeer, removeRemotePeer, relay])
 
-  return { localStream, remotePeers, isConnected, error }
+  const toggleMic = useCallback(() => {
+    const stream = localStreamRef.current
+    if (!stream) return
+    stream.getAudioTracks().forEach((t) => { t.enabled = !t.enabled })
+    setIsMuted((prev) => !prev)
+  }, [])
+
+  const toggleCamera = useCallback(() => {
+    const stream = localStreamRef.current
+    if (!stream) return
+    stream.getVideoTracks().forEach((t) => { t.enabled = !t.enabled })
+    setIsCameraOn((prev) => !prev)
+  }, [])
+
+  const leaveCall = useCallback(() => {
+    wsRef.current?.close()
+    wsRef.current = null
+    pcsRef.current.forEach((pc) => pc.close())
+    pcsRef.current.clear()
+    remoteStreamsRef.current.clear()
+    localStreamRef.current?.getTracks().forEach((t) => t.stop())
+    localStreamRef.current = null
+    setLocalStream(null)
+    setRemotePeers([])
+    setIsConnected(false)
+  }, [])
+
+  return { localStream, remotePeers, isConnected, isMuted, isCameraOn, error, toggleMic, toggleCamera, leaveCall }
 }
