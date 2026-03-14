@@ -1,3 +1,4 @@
+import logging
 import re
 from typing import Optional
 
@@ -14,6 +15,8 @@ from app.schemas.diagram import (
 from app.schemas.intent import IntentAction, IntentResult
 from app.services.model_orchestrator import AIFactEdge, AIFactNode, AIFacts
 
+logger = logging.getLogger(__name__)
+
 
 class DiagramGenerator:
     MAX_NODES = 12
@@ -29,6 +32,14 @@ class DiagramGenerator:
         diagram_type: DiagramType,
         current: Optional[DiagramDocument] = None,
     ) -> DiagramDocument:
+        logger.info(
+            "diagram_generator: using AI facts path (generate_from_facts) | "
+            "diagram_type=%s nodes=%s edges=%s current_version=%s",
+            diagram_type.value,
+            len(facts.nodes),
+            len(facts.edges),
+            current.version if current else 0,
+        )
         nodes: list[DiagramNode] = []
         for fact in facts.nodes[: self.MAX_NODES]:
             nodes.append(self._fact_to_node(fact))
@@ -59,6 +70,15 @@ class DiagramGenerator:
         diagram_type: DiagramType,
         current: DiagramDocument,
     ) -> Optional[DiagramPatch]:
+        logger.info(
+            "diagram_generator: using AI facts path (generate_patch_from_facts) | "
+            "diagram_type=%s facts_nodes=%s facts_edges=%s current_nodes=%s current_version=%s",
+            diagram_type.value,
+            len(facts.nodes),
+            len(facts.edges),
+            len(current.nodes),
+            current.version,
+        )
         current_node_map = {n.id: n for n in current.nodes}
         current_edge_map = {e.id: e for e in current.edges}
         ops: list[PatchOp] = []
@@ -111,12 +131,22 @@ class DiagramGenerator:
                 ops.append(PatchOp(op="remove_edge", data={"id": edge_id}))
 
         if not ops:
+            logger.debug(
+                "diagram_generator: AI facts patch produced no ops (noop), returning None"
+            )
             return None
 
         layout_ops = sum(
             1 for op in ops if op.op in ("add_node", "remove_node")
         )
         if current.nodes and layout_ops / len(current.nodes) > 0.3:
+            logger.info(
+                "diagram_generator: AI facts patch skipped (structural change >30%%) | "
+                "layout_ops=%s current_nodes=%s ratio=%.2f → caller should use replace",
+                layout_ops,
+                len(current.nodes),
+                layout_ops / len(current.nodes),
+            )
             return None
 
         return DiagramPatch(
@@ -136,6 +166,13 @@ class DiagramGenerator:
     def generate_document(
         self, intent: IntentResult, transcript: str
     ) -> DiagramDocument:
+        logger.info(
+            "diagram_generator: using rules fallback (generate_document) | "
+            "diagram_type=%s reason=%s transcript_len=%s",
+            intent.diagram_type.value,
+            intent.reason or "unknown",
+            len(transcript),
+        )
         dt = intent.diagram_type
         if dt == DiagramType.MINDMAP:
             return self._build_mindmap(transcript)
@@ -158,8 +195,22 @@ class DiagramGenerator:
             intent.action == IntentAction.REPLACE
             or current.diagram_type != intent.diagram_type
         ):
+            logger.debug(
+                "diagram_generator: rules patch skipped (replace or type mismatch) | "
+                "action=%s current_type=%s intent_type=%s",
+                intent.action.value,
+                current.diagram_type.value,
+                intent.diagram_type.value,
+            )
             return None
 
+        logger.info(
+            "diagram_generator: using rules fallback (generate_patch) | "
+            "diagram_type=%s current_version=%s delta_len=%s",
+            intent.diagram_type.value,
+            current.version,
+            len(transcript_delta),
+        )
         label = self._truncate(transcript_delta)
         node_id = f"n-append-{len(current.nodes) + 1}"
         node = DiagramNode(
