@@ -1,3 +1,5 @@
+import logging
+
 from app.config import Settings
 from app.schemas.diagram import DiagramDocument, DiagramType
 from app.schemas.events import (
@@ -22,6 +24,8 @@ from .model_orchestrator import ModelOrchestrator
 from .render_adapter import RenderAdapter
 from .transcript_buffer import TranscriptBuffer
 from .trigger_engine import TriggerEngine
+
+logger = logging.getLogger(__name__)
 
 
 class SessionPipeline:
@@ -69,7 +73,9 @@ class SessionPipeline:
 
         if isinstance(event, (SpeechPartialEvent, SpeechFinalEvent)):
             text = self.transcript_buffer.append(state, event.text)
+            kind = "FINAL  " if isinstance(event, SpeechFinalEvent) else "partial"
             if text:
+                logger.info("[%s] speech.%s | %r", state.session_id, kind, text)
                 outbound.append(
                     TranscriptUpdateEvent(
                         text=text,
@@ -82,9 +88,12 @@ class SessionPipeline:
         if not decision.should_generate:
             return outbound
 
+        logger.info("[%s] trigger=%s | unread=%d chars", state.session_id, decision.reason, len(unread_text))
+
         intent = self.intent_classifier.classify(unread_text or state.raw_transcript)
         await self.model_orchestrator.choose_path(intent)
         outbound.append(IntentResultEvent(result=intent))
+        logger.info("[%s] intent=%s confidence=%.2f", state.session_id, intent.diagram_type, intent.confidence)
 
         if intent.diagram_type == DiagramType.NONE:
             self.trigger_engine.arm_cooldown(state)
@@ -97,6 +106,7 @@ class SessionPipeline:
             state.diagram_type = diagram.diagram_type
             self.transcript_buffer.mark_generated(state)
             self.trigger_engine.arm_cooldown(state)
+            logger.info("[%s] diagram.replace type=%s nodes=%d", state.session_id, diagram.diagram_type, len(diagram.nodes))
             outbound.append(DiagramReplaceEvent(diagram=diagram))
             return outbound
 
@@ -106,6 +116,7 @@ class SessionPipeline:
             state.diagram_type = state.diagram.diagram_type
             self.transcript_buffer.mark_generated(state)
             self.trigger_engine.arm_cooldown(state)
+            logger.info("[%s] diagram.patch ops=%d", state.session_id, len(patch.ops))
             outbound.append(DiagramPatchEvent(patch=patch))
             return outbound
 
@@ -115,6 +126,7 @@ class SessionPipeline:
         state.diagram_type = diagram.diagram_type
         self.transcript_buffer.mark_generated(state)
         self.trigger_engine.arm_cooldown(state)
+        logger.info("[%s] diagram.replace (fallback) type=%s nodes=%d", state.session_id, diagram.diagram_type, len(diagram.nodes))
         outbound.append(DiagramReplaceEvent(diagram=diagram))
         return outbound
 
