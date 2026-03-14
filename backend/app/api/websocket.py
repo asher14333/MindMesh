@@ -80,9 +80,15 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
             # --- parse ---
             try:
                 event = parse_inbound_event(payload)
+<<<<<<< Updated upstream
             except (ValueError, KeyError) as exc:
                 await websocket.send_json(
                     ErrorEvent(message=f"unknown or malformed event: {exc}").model_dump(mode="json")
+=======
+            except Exception as exc:
+                await websocket.send_json(
+                    ErrorEvent(message=f"Invalid event: {exc}").model_dump(mode="json")
+>>>>>>> Stashed changes
                 )
                 continue
 
@@ -92,6 +98,7 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
                     state = await session_manager.get_or_create(session_id=session_id)
                     outbound_events = await pipeline.handle_event(state=state, event=event)
                 for outbound_event in outbound_events:
+<<<<<<< Updated upstream
                     payload = outbound_event.model_dump(mode="json")
                     # Send back to the sender
                     await websocket.send_json(payload)
@@ -99,6 +106,9 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
                     # so all clients see each other's speech labeled by speaker
                     if payload.get("type") == "transcript.update":
                         await session_manager.broadcast(session_id, payload, exclude=websocket)
+=======
+                    await websocket.send_json(outbound_event.model_dump(mode="json"))
+>>>>>>> Stashed changes
             except Exception as exc:
                 logger.exception("Pipeline error for session %s", session_id)
                 try:
@@ -110,5 +120,8 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
     finally:
         pause_task.cancel()
         await asyncio.gather(pause_task, return_exceptions=True)
+<<<<<<< Updated upstream
         session_manager.unregister_ws(session_id, websocket)
+=======
+>>>>>>> Stashed changes
         await session_manager.disconnect(session_id=session_id)
