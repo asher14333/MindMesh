@@ -7,10 +7,12 @@ import type { RemotePeer } from "@/hooks/use-webrtc"
 function PeerTile({
   stream,
   name,
+  isLocal = false,
   speaking = false,
 }: {
   stream: MediaStream | null
   name: string
+  isLocal?: boolean
   speaking?: boolean
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -19,7 +21,22 @@ function PeerTile({
     const el = videoRef.current
     if (!el) return
     el.srcObject = stream
-  }, [stream])
+    // Only mute our own feed — never mute remote peers.
+    // Do NOT use name === 'You': every peer may share the same display name.
+    el.muted = isLocal
+    el.volume = 1.0
+    if (stream) {
+      // Explicit play() — autoPlay alone is unreliable for unmuted media.
+      // If the browser blocks it (NotAllowedError / autoplay policy), register a
+      // one-time click listener so the next user interaction unlocks audio.
+      el.play().catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "NotAllowedError") {
+          const unlock = () => { el.play().catch(() => {}); document.removeEventListener("click", unlock) }
+          document.addEventListener("click", unlock)
+        }
+      })
+    }
+  }, [stream, isLocal])
 
   return (
     <div
@@ -34,7 +51,6 @@ function PeerTile({
           ref={videoRef}
           autoPlay
           playsInline
-          muted={name === "You"}
           className="h-full w-full object-cover"
         />
       ) : (
@@ -57,11 +73,11 @@ export default function ParticipantStrip() {
     <div className="shrink-0 border-b border-border/40 bg-muted/30 px-4 py-3 md:px-6">
       <div className="flex items-center justify-center gap-3 md:gap-4">
         <div className="relative flex flex-col items-center gap-1">
-          <PeerTile stream={localStream} name="You" />
+          <PeerTile stream={localStream} name="You" isLocal />
         </div>
         {remotePeers.map((peer: RemotePeer) => (
           <div key={peer.peerId} className="relative flex flex-col items-center gap-1">
-            <PeerTile stream={peer.stream} name={peer.userId} />
+            <PeerTile stream={peer.stream} name={peer.userId} isLocal={false} />
           </div>
         ))}
       </div>

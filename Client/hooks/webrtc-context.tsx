@@ -7,7 +7,12 @@ const WebRTCContext = createContext<WebRTCState>({
   localStream: null,
   remotePeers: [],
   isConnected: false,
+  isMuted: false,
+  isCameraOn: true,
   error: null,
+  toggleMic: () => {},
+  toggleCamera: () => {},
+  leaveCall: () => {},
 })
 
 export function WebRTCProvider({

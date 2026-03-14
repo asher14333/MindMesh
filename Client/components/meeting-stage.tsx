@@ -1,32 +1,50 @@
 "use client"
 
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useWebRTCContext } from "@/hooks/webrtc-context"
+import type { RemotePeer } from "@/hooks/use-webrtc"
 
 // Renders a video element whose srcObject is kept in sync with the stream,
 // or falls back to an initial-letter avatar if no stream is available.
 function VideoTile({
   stream,
   name,
+  isLocal = false,
   isSpeaking = false,
+  mirror = false,
   size = "small",
+  onClick,
 }: {
   stream?: MediaStream | null
   name: string
+  isLocal?: boolean
   isSpeaking?: boolean
+  mirror?: boolean
   size?: "large" | "small"
+  onClick?: () => void
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
     const el = videoRef.current
     if (!el) return
+    el.srcObject = stream ?? null
+    // Only mute our own feed — never mute remote peers.
+    // Do NOT use name === 'You': every peer may share the same display name.
+    el.muted = isLocal
+    el.volume = 1.0
     if (stream) {
-      el.srcObject = stream
-    } else {
-      el.srcObject = null
+      // Explicit play() — autoPlay alone is unreliable for unmuted media.
+      // If the browser blocks it (NotAllowedError / autoplay policy), register a
+      // one-time click listener so the next user interaction unlocks audio.
+      el.play().catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "NotAllowedError") {
+          const unlock = () => { el.play().catch(() => {}); document.removeEventListener("click", unlock) }
+          document.addEventListener("click", unlock)
+        }
+      })
     }
-  }, [stream])
+  }, [stream, isLocal])
 
   const nameClass =
     size === "large"
@@ -40,8 +58,8 @@ function VideoTile({
           ref={videoRef}
           autoPlay
           playsInline
-          muted={name === "You"}
           className="h-full w-full object-cover"
+          style={mirror ? { transform: "scaleX(-1)" } : undefined}
         />
       ) : (
         // No stream — show initial avatar placeholder
@@ -74,29 +92,54 @@ function VideoTile({
           <span className={`absolute bottom-1.5 left-2 ${nameClass}`}>{name}</span>
         )}
       </div>
+
+      {/* Click-to-pin overlay for rail tiles */}
+      {onClick && (
+        <button
+          onClick={onClick}
+          className="absolute inset-0 cursor-pointer opacity-0 hover:opacity-100 transition-opacity"
+          aria-label={`Pin ${name} as main speaker`}
+        >
+          <div className="flex h-full w-full items-center justify-center bg-black/30">
+            <span className="rounded-md bg-black/50 px-2 py-1 text-[10px] font-medium text-white">
+              Pin
+            </span>
+          </div>
+        </button>
+      )}
     </>
   )
 }
 
 export default function MeetingStage() {
   const { localStream, remotePeers, error } = useWebRTCContext()
+  const [pinnedPeerId, setPinnedPeerId] = useState<string | null>(null)
+
+  // Resolve pinned peer; fall back to first remote peer
+  const pinnedPeer: RemotePeer | null =
+    (pinnedPeerId ? remotePeers.find((p) => p.peerId === pinnedPeerId) ?? null : null) ??
+    remotePeers[0] ??
+    null
+
+  // Rail shows everyone except the main (pinned) peer
+  const railPeers = remotePeers.filter((p) => p.peerId !== pinnedPeer?.peerId)
 
   return (
     <div className="flex h-full gap-4 p-4 md:gap-6 md:p-6">
-      {/* Camera permission error banner */}
       {error && (
         <div className="absolute left-1/2 top-4 z-30 -translate-x-1/2 rounded-full border border-red-200 bg-red-50 px-4 py-1.5 text-xs font-medium text-red-700 shadow-sm">
           {error}
         </div>
       )}
 
-      {/* Main speaker — first remote peer, or waiting placeholder */}
+      {/* Main speaker */}
       <div className="flex flex-1 items-center justify-center">
         <div className="relative aspect-video w-full max-w-4xl overflow-hidden rounded-2xl bg-slate-800 ring-1 ring-border/30">
-          {remotePeers[0] ? (
+          {pinnedPeer ? (
             <VideoTile
-              stream={remotePeers[0].stream}
-              name={remotePeers[0].userId}
+              stream={pinnedPeer.stream}
+              name={pinnedPeer.userId}
+              isLocal={false}
               isSpeaking
               size="large"
             />
@@ -108,19 +151,25 @@ export default function MeetingStage() {
         </div>
       </div>
 
-      {/* Right participant rail — remaining remote peers + local "You" tile */}
+      {/* Right rail */}
       <div className="hidden w-44 shrink-0 flex-col gap-3 lg:flex xl:w-52">
-        {remotePeers.slice(1).map((peer) => (
+        {railPeers.map((peer) => (
           <div
             key={peer.peerId}
             className="relative aspect-video w-full overflow-hidden rounded-xl bg-slate-800 ring-1 ring-border/30"
           >
-            <VideoTile stream={peer.stream} name={peer.userId} size="small" />
+            <VideoTile
+              stream={peer.stream}
+              name={peer.userId}
+              isLocal={false}
+              size="small"
+              onClick={() => setPinnedPeerId(peer.peerId)}
+            />
           </div>
         ))}
-        {/* Local camera — always last */}
+        {/* Local camera — mirrored, always last */}
         <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-slate-800 ring-1 ring-border/30">
-          <VideoTile stream={localStream} name="You" size="small" />
+          <VideoTile stream={localStream} name="You" isLocal size="small" mirror />
         </div>
       </div>
     </div>
