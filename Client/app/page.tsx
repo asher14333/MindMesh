@@ -70,7 +70,7 @@ export default function MindMeshDemo() {
           </div>
         ) : (
           <div className="flex h-screen flex-col bg-background">
-            <MeetingBar />
+            <MeetingBar onBack={() => setMindMeshActive(false)} />
             <ParticipantStrip />
             <main className="relative flex-1 overflow-hidden">
               <ProcessCanvas />

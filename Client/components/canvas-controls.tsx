@@ -1,8 +1,9 @@
 "use client"
 
 import { useState } from "react"
-import { ZoomIn, ZoomOut, Maximize2, GitBranch, Network, Layers, Users } from "lucide-react"
+import { ZoomIn, ZoomOut, Maximize2, GitBranch, Network, Layers, Users, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { useMindMesh } from "@/lib/mindmesh/store"
 
 const viewModes = [
   { id: "process", label: "Process Flow", icon: GitBranch },
@@ -14,6 +15,8 @@ const viewModes = [
 export default function CanvasControls() {
   const [activeView, setActiveView] = useState("process")
   const [zoom, setZoom] = useState(100)
+  const { debug, connectionState } = useMindMesh()
+  const isConnected = connectionState === "open"
 
   return (
     <div className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 md:bottom-6">
@@ -78,6 +81,24 @@ export default function CanvasControls() {
       <div className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/92 px-2.5 py-1.5 shadow-sm backdrop-blur-sm">
         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
         <span className="text-xs font-medium text-slate-500">Live View</span>
+      </div>
+
+      {/* Divider */}
+      <div className="h-6 w-px bg-border/60" />
+
+      {/* Clear canvas */}
+      <div className="flex items-center rounded-xl border border-slate-200 bg-white/92 p-1 shadow-sm backdrop-blur-sm">
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!isConnected}
+          onClick={() => debug.resetDiagram()}
+          className="h-7 gap-1.5 px-2.5 text-xs font-medium text-red-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+          title="Clear canvas"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Clear</span>
+        </Button>
       </div>
     </div>
   )

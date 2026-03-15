@@ -1,18 +1,37 @@
 "use client"
 
-import { Share2, Sparkles, Users } from "lucide-react"
+import { ArrowLeft, Sparkles, Trash2, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useWebRTCContext } from "@/hooks/webrtc-context"
+import { useMindMesh } from "@/lib/mindmesh/store"
 
-export default function MeetingBar() {
+interface MeetingBarProps {
+  onBack?: () => void
+}
+
+export default function MeetingBar({ onBack }: MeetingBarProps) {
   const { remotePeers, isConnected } = useWebRTCContext()
+  const { debug, connectionState } = useMindMesh()
+  const canClear = connectionState === "open"
   // +1 for local "You"
   const participantCount = remotePeers.length + 1
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-border/60 bg-card px-4 md:px-6">
-      {/* Left section: Logo + Meeting title */}
+      {/* Left section: Back button + Logo + Meeting title */}
       <div className="flex items-center gap-4 md:gap-6">
+        {/* Back to cameras */}
+        {onBack && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onBack}
+            title="Back to cameras"
+            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+        )}
         {/* Logo */}
         <div className="flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary">
@@ -76,14 +95,17 @@ export default function MeetingBar() {
           <span className="text-xs font-medium text-secondary">AI translating</span>
         </div>
 
-        {/* Share button */}
-        <Button 
-          variant="outline" 
-          size="sm" 
-          className="h-8 gap-1.5 border-border/80 text-secondary hover:bg-muted/50"
+        {/* Clear canvas */}
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!canClear}
+          onClick={() => debug.resetDiagram()}
+          className="h-8 gap-1.5 text-xs font-medium text-red-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+          title="Clear canvas"
         >
-          <Share2 className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Share</span>
+          <Trash2 className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Clear</span>
         </Button>
       </div>
     </header>
