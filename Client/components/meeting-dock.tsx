@@ -1,6 +1,6 @@
 "use client"
 
-import { Mic, MicOff, Video, VideoOff, Monitor, MoreHorizontal, PhoneOff } from "lucide-react"
+import { Mic, MicOff, Video, VideoOff, PhoneOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useWebRTCContext } from "@/hooks/webrtc-context"
 import { useMindMesh } from "@/lib/mindmesh/store"
@@ -60,21 +60,6 @@ export default function MeetingDock({ onLeave }: MeetingDockProps) {
         >
           {isCameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
         </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-10 w-10 rounded-lg text-foreground hover:bg-muted"
-        >
-          <Monitor className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-10 w-10 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <MoreHorizontal className="h-4 w-4" />
-        </Button>
-
         {/* Divider */}
         <div className="mx-1 h-6 w-px bg-border/60" />
 
