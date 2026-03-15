@@ -13,11 +13,10 @@ export default function MeetingBar({ onBack }: MeetingBarProps) {
   const { remotePeers, isConnected } = useWebRTCContext()
   const { debug, connectionState } = useMindMesh()
   const canClear = connectionState === "open"
-  // +1 for local "You"
   const participantCount = remotePeers.length + 1
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border/60 bg-card px-4 md:px-6">
+    <header className="animate-bar-enter flex h-14 shrink-0 items-center justify-between border-b border-border/40 bg-card/80 px-4 backdrop-blur-md md:px-6">
       {/* Left section: Back button + Logo + Meeting title */}
       <div className="flex items-center gap-4 md:gap-6">
         {/* Back to cameras */}
@@ -27,14 +26,14 @@ export default function MeetingBar({ onBack }: MeetingBarProps) {
             size="icon"
             onClick={onBack}
             title="Back to cameras"
-            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+            className="h-8 w-8 rounded-lg text-muted-foreground transition-all duration-200 hover:-translate-x-0.5 hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
         )}
         {/* Logo */}
-        <div className="flex items-center gap-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary shadow-sm">
             <svg
               className="h-4 w-4 text-primary-foreground"
               viewBox="0 0 24 24"
@@ -55,44 +54,44 @@ export default function MeetingBar({ onBack }: MeetingBarProps) {
               <path d="m16.24 7.76 2.83-2.83" />
             </svg>
           </div>
-          <span className="hidden text-sm font-semibold text-primary sm:block">MindMesh</span>
+          <span className="hidden text-sm font-bold tracking-tight text-primary sm:block">MindMesh</span>
         </div>
 
         {/* Divider */}
-        <div className="hidden h-5 w-px bg-border md:block" />
+        <div className="hidden h-5 w-px bg-border/50 md:block" />
 
         {/* Meeting title */}
-        <h1 className="max-w-[180px] truncate text-sm font-medium text-foreground sm:max-w-xs md:max-w-md lg:max-w-lg">
+        <h1 className="max-w-[180px] truncate text-sm font-medium tracking-tight text-foreground sm:max-w-xs md:max-w-md lg:max-w-lg">
           Enterprise Customer Onboarding Approval Flow
         </h1>
 
         {/* Live pill + Timer */}
         <div className="hidden items-center gap-3 sm:flex">
-          <div className="flex items-center gap-1.5 rounded-full bg-red-50 px-2 py-0.5">
+          <div className="flex items-center gap-1.5 rounded-full bg-red-500/8 px-2.5 py-1 transition-colors">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
-            <span className="text-xs font-medium text-red-600">Live</span>
+            <span className="text-xs font-semibold text-red-600">Live</span>
           </div>
-          <span className="font-mono text-xs text-muted-foreground">23:41</span>
+          <span className="font-mono text-xs tabular-nums text-muted-foreground">23:41</span>
         </div>
       </div>
 
-      {/* Right section: Participants + AI badge + Share */}
+      {/* Right section: Participants + AI badge + Clear */}
       <div className="flex items-center gap-3 md:gap-4">
         {/* Participants */}
         <div className="hidden items-center gap-1.5 sm:flex">
           <Users className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="text-xs text-muted-foreground">
+          <span className="text-xs font-medium text-muted-foreground">
             {participantCount} {participantCount === 1 ? "participant" : "participants"}
           </span>
           {isConnected && (
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" title="Connected" />
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.4)]" title="Connected" />
           )}
         </div>
 
         {/* AI Badge */}
-        <div className="hidden items-center gap-1.5 rounded-full border border-border/80 bg-muted/50 px-2.5 py-1 md:flex">
+        <div className="hidden items-center gap-1.5 rounded-full border border-accent/20 bg-accent/6 px-2.5 py-1 md:flex animate-glow-pulse">
           <Sparkles className="h-3 w-3 text-accent" />
-          <span className="text-xs font-medium text-secondary">AI translating</span>
+          <span className="text-xs font-semibold text-accent">AI translating</span>
         </div>
 
         {/* Clear canvas */}
@@ -101,7 +100,7 @@ export default function MeetingBar({ onBack }: MeetingBarProps) {
           size="sm"
           disabled={!canClear}
           onClick={() => debug.resetDiagram()}
-          className="h-8 gap-1.5 text-xs font-medium text-red-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+          className="h-8 gap-1.5 rounded-lg text-xs font-semibold text-red-500 transition-all duration-200 hover:-translate-y-px hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
           title="Clear canvas"
         >
           <Trash2 className="h-3.5 w-3.5" />

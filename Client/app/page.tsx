@@ -37,14 +37,24 @@ export default function MindMeshDemo() {
 
   if (callEnded) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-background">
-        <p className="text-lg font-medium text-foreground">You left the call</p>
-        <button
-          onClick={() => { setCallEnded(false); setMindMeshActive(false) }}
-          className="rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium text-secondary hover:bg-muted"
-        >
-          Rejoin
-        </button>
+      <div className="flex h-screen flex-col items-center justify-center gap-6 bg-background">
+        <div className="animate-scale-in flex flex-col items-center gap-4">
+          {/* Logo */}
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary animate-float">
+            <svg className="h-6 w-6 text-primary-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M12 2v4" /><path d="M12 18v4" /><path d="M2 12h4" /><path d="M18 12h4" />
+            </svg>
+          </div>
+          <p className="text-lg font-semibold text-foreground tracking-tight">You left the call</p>
+          <p className="text-sm text-muted-foreground">Your session has ended</p>
+          <button
+            onClick={() => { setCallEnded(false); setMindMeshActive(false) }}
+            className="mt-2 rounded-xl border border-border bg-card px-6 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md hover:bg-muted/50"
+          >
+            Rejoin session
+          </button>
+        </div>
       </div>
     )
   }

@@ -124,6 +124,85 @@
   }
 }
 
+/* ─── Shared animations ─── */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in-down {
+  from { opacity: 0; transform: translateY(-10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-6px); }
+}
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(3, 105, 161, 0.15); }
+  50%      { box-shadow: 0 0 20px rgba(3, 105, 161, 0.30); }
+}
+@keyframes breathe {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 1; }
+}
+@keyframes dock-enter {
+  from { opacity: 0; transform: translate(-50%, 20px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes bar-enter {
+  from { opacity: 0; transform: translateY(-100%); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes strip-enter {
+  from { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; }
+  to   { opacity: 1; max-height: 200px; }
+}
+@keyframes tile-pop {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.animate-fade-in      { animation: fade-in 0.4s ease-out both; }
+.animate-fade-in-up   { animation: fade-in-up 0.5s ease-out both; }
+.animate-fade-in-down { animation: fade-in-down 0.4s ease-out both; }
+.animate-slide-up     { animation: slide-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-scale-in     { animation: scale-in 0.35s ease-out both; }
+.animate-float        { animation: float 4s ease-in-out infinite; }
+.animate-shimmer      { animation: shimmer 2s linear infinite; }
+.animate-glow-pulse   { animation: glow-pulse 2.5s ease-in-out infinite; }
+.animate-breathe      { animation: breathe 3s ease-in-out infinite; }
+.animate-dock-enter   { animation: dock-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-bar-enter    { animation: bar-enter 0.35s ease-out both; }
+.animate-strip-enter  { animation: strip-enter 0.4s ease-out both; }
+.animate-tile-pop     { animation: tile-pop 0.35s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+.delay-75  { animation-delay: 75ms; }
+.delay-150 { animation-delay: 150ms; }
+.delay-200 { animation-delay: 200ms; }
+.delay-300 { animation-delay: 300ms; }
+.delay-500 { animation-delay: 500ms; }
+.delay-700 { animation-delay: 700ms; }
+
 /* React Flow polish for server-driven diagrams */
 .mindmesh-canvas {
   --mindmesh-canvas-bg: #f8fafc;

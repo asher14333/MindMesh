@@ -9,64 +9,10 @@ import {
   getNodesBounds,
   type ReactFlowInstance,
 } from "@xyflow/react"
-import { useMindMesh, type MindMeshState } from "@/lib/mindmesh/store"
-import { Button } from "@/components/ui/button"
-
-function DevDebugPanel({
-  state,
-  connectionState,
-  onResetDiagram,
-  onRunDemoScript,
-}: {
-  state: MindMeshState
-  connectionState: string
-  onResetDiagram: () => boolean
-  onRunDemoScript: () => void
-}) {
-  const last = state.recentEvents[state.recentEvents.length - 1]
-  const isConnected = connectionState === "open"
-
-  return (
-    <div className="absolute left-4 top-4 z-30 w-[320px] rounded-lg border border-border/60 bg-card/90 p-3 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
-      <div className="flex items-center justify-between">
-        <span className="font-medium text-foreground">MindMesh Debug</span>
-        <span>v{state.version}</span>
-      </div>
-      <div className="mt-2 space-y-1">
-        <div>mode: {state.mode}</div>
-        <div>diagram: {state.diagramType}</div>
-        <div>desynced: {String(state.desynced)}</div>
-        <div>last: {last?.summary ?? "none"}</div>
-        {state.lastError ? (
-          <div className="font-medium text-red-600">error: {state.lastError.message}</div>
-        ) : null}
-      </div>
-      <div className="mt-3 flex items-center gap-2">
-        <Button
-          size="sm"
-          variant="secondary"
-          className="h-7 px-2 text-[11px]"
-          onClick={onRunDemoScript}
-          disabled={!isConnected}
-        >
-          Run Demo Script
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 px-2 text-[11px]"
-          onClick={onResetDiagram}
-          disabled={!isConnected}
-        >
-          Reset Diagram
-        </Button>
-      </div>
-    </div>
-  )
-}
+import { useMindMesh } from "@/lib/mindmesh/store"
 
 export default function ProcessCanvas() {
-  const { state, connectionState, debug } = useMindMesh()
+  const { state, connectionState } = useMindMesh()
   const canvasRef = useRef<HTMLDivElement | null>(null)
 
   const nodes = useMemo(() => Object.values(state.nodesById), [state.nodesById])
@@ -181,14 +127,6 @@ export default function ProcessCanvas() {
         </div>
       ) : null}
 
-      {process.env.NEXT_PUBLIC_MINDMESH_DEBUG === "1" ? (
-        <DevDebugPanel
-          state={state}
-          connectionState={connectionState}
-          onResetDiagram={debug.resetDiagram}
-          onRunDemoScript={debug.runDemoScript}
-        />
-      ) : null}
     </div>
   )
 }
