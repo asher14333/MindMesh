@@ -34,12 +34,44 @@ class UICommandEvent(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class CanvasEditEvent(BaseModel):
+    type: Literal["canvas.edit"]
+    ops: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CollabCursorEvent(BaseModel):
+    type: Literal["collab.cursor"]
+    user_id: str
+    user_name: str = ""
+    position: dict[str, float] = Field(default_factory=dict)
+    color: str = "#6366f1"
+
+
+class CollabSelectionEvent(BaseModel):
+    type: Literal["collab.selection"]
+    user_id: str
+    user_name: str = ""
+    node_id: Optional[str] = None
+    color: str = "#6366f1"
+
+
+class TranscriptionToggleEvent(BaseModel):
+    type: Literal["transcription.toggle"]
+    enabled: bool
+    user_id: str
+    user_name: str = ""
+
+
 InboundEvent = Union[
     SessionStartEvent,
     SessionStopEvent,
     SpeechPartialEvent,
     SpeechFinalEvent,
     UICommandEvent,
+    CanvasEditEvent,
+    CollabCursorEvent,
+    CollabSelectionEvent,
+    TranscriptionToggleEvent,
 ]
 
 
@@ -96,6 +128,10 @@ def parse_inbound_event(payload: dict[str, Any]) -> InboundEvent:
         "speech.partial": SpeechPartialEvent,
         "speech.final": SpeechFinalEvent,
         "ui.command": UICommandEvent,
+        "canvas.edit": CanvasEditEvent,
+        "collab.cursor": CollabCursorEvent,
+        "collab.selection": CollabSelectionEvent,
+        "transcription.toggle": TranscriptionToggleEvent,
     }
 
     model = model_map.get(event_type)

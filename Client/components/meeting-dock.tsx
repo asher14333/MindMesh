@@ -8,7 +8,7 @@ import {
   VideoOff,
   PhoneOff,
   Clock,
-  MessageSquare,
+  AudioLines,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useWebRTCContext } from "@/hooks/webrtc-context"
@@ -34,8 +34,10 @@ function useElapsedTime() {
 export default function MeetingDock({ onLeave }: MeetingDockProps) {
   const { isMuted, isCameraOn, toggleMic, toggleCamera, leaveCall } =
     useWebRTCContext()
-  const { state, connectionState } = useMindMesh()
+  const { state, connectionState, toggleTranscription } = useMindMesh()
   const elapsed = useElapsedTime()
+
+  const isListening = state.isTranscribing
 
   const pill = (() => {
     if (connectionState !== "open") {
@@ -143,14 +145,30 @@ export default function MeetingDock({ onLeave }: MeetingDockProps) {
         {/* Divider */}
         <div className="mx-1 h-6 w-px bg-neutral-200" />
 
-        {/* Chat */}
+        {/* Speech-to-Text Toggle */}
         <Button
           variant="ghost"
           size="icon"
-          className="h-10 w-10 rounded-full text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+          onClick={toggleTranscription}
+          title={isListening ? "Stop transcription" : "Start transcription"}
+          className={`h-10 w-10 rounded-full transition-all ${
+            isListening
+              ? "bg-emerald-50 text-emerald-600 hover:bg-emerald-100 ring-2 ring-emerald-200"
+              : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+          }`}
         >
-          <MessageSquare className="h-[18px] w-[18px]" />
+          <AudioLines className={`h-[18px] w-[18px] ${isListening ? "animate-pulse" : ""}`} />
         </Button>
+
+        {/* Speech indicator */}
+        {isListening && (
+          <div className="flex items-center gap-1.5 px-1">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+            <span className="text-[10px] font-medium text-emerald-600">
+              Transcribing
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )

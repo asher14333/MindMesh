@@ -12,7 +12,11 @@ import {
 } from "react"
 import { MarkerType, Position as HandlePosition, type Edge, type Node } from "@xyflow/react"
 import type {
+  CanvasEditOp,
   ClientEvent,
+  CollabCursorEvent,
+  CollabEditEvent,
+  CollabSelectionEvent,
   DiagramDocument,
   DiagramEdge,
   DiagramEdgeData,
@@ -25,6 +29,7 @@ import type {
   SessionMode,
   StatusEvent,
   TranscriptUpdateEvent,
+  TranscriptionToggleEvent,
   IntentResultEvent,
   DiagramType,
 } from "@/lib/mindmesh/events"
@@ -36,6 +41,21 @@ type RFEdge = Edge<DiagramEdgeData>
 type RecentEventSummary = {
   at: number
   summary: string
+}
+
+export type RemoteCursor = {
+  user_id: string
+  user_name: string
+  position: { x: number; y: number }
+  color: string
+  lastSeen: number
+}
+
+export type RemoteSelection = {
+  user_id: string
+  user_name: string
+  node_id: string | null
+  color: string
 }
 
 export type MindMeshState = {
@@ -52,6 +72,14 @@ export type MindMeshState = {
   lastReplaceVersion: number | null
   lastAddNodePatchVersion: number | null
   recentEvents: RecentEventSummary[]
+  // Collaboration state
+  remoteCursors: Record<string, RemoteCursor>
+  remoteSelections: Record<string, RemoteSelection>
+  // Track which nodes were user-edited (don't let AI override)
+  userEditedNodeIds: Set<string>
+  // Shared transcription state
+  isTranscribing: boolean
+  transcriptionToggledBy: string | null
 }
 
 type MindMeshContextValue = {
@@ -62,6 +90,19 @@ type MindMeshContextValue = {
     resetDiagram: () => boolean
     runDemoScript: () => void
   }
+  // Canvas edit actions
+  updateNode: (id: string, changes: Partial<DiagramNodeData> & { position?: { x: number; y: number } }) => void
+  addNode: (position: { x: number; y: number }, data?: Partial<DiagramNodeData>) => void
+  removeNode: (id: string) => void
+  addEdge: (source: string, target: string) => void
+  removeEdge: (id: string) => void
+  // Collab actions
+  sendCursorPosition: (position: { x: number; y: number }) => void
+  sendSelection: (nodeId: string | null) => void
+  userId: string
+  userColor: string
+  // Transcription
+  toggleTranscription: () => void
 }
 
 const MindMeshContext = createContext<MindMeshContextValue | null>(null)
@@ -132,6 +173,7 @@ function toRFEdge(edge: DiagramEdge): RFEdge {
 }
 
 function summarizeEvent(event: ServerEvent): string {
+  if (!event || typeof event !== "object" || !("type" in event)) return "unknown"
   switch (event.type) {
     case "status":
       return `status mode=${event.mode} diagram_type=${event.diagram_type ?? "null"}`
@@ -147,6 +189,16 @@ function summarizeEvent(event: ServerEvent): string {
       return `patch v=${event.patch.version} base=${event.patch.base_version} ops=${event.patch.ops.length}`
     case "error":
       return `error ${event.message}`
+    case "collab.cursor":
+      return `collab.cursor user=${event.user_id}`
+    case "collab.selection":
+      return `collab.selection user=${event.user_id}`
+    case "collab.edit":
+      return `collab.edit ops=${event.ops.length}`
+    case "transcription.toggle":
+      return `transcription.toggle enabled=${event.enabled} by=${event.user_name}`
+    default:
+      return `unknown event`
   }
 }
 
@@ -279,7 +331,16 @@ function applyPatch(state: MindMeshState, patch: DiagramPatch): MindMeshState {
   }
 }
 
-type Action = { type: "server.event"; event: ServerEvent }
+type Action =
+  | { type: "server.event"; event: ServerEvent }
+  | { type: "local.update_node"; id: string; changes: Partial<DiagramNodeData> & { position?: { x: number; y: number } } }
+  | { type: "local.add_node"; node: RFNode }
+  | { type: "local.remove_node"; id: string }
+  | { type: "local.add_edge"; edge: RFEdge }
+  | { type: "local.remove_edge"; id: string }
+  | { type: "collab.cursor"; cursor: RemoteCursor }
+  | { type: "collab.selection"; selection: RemoteSelection }
+  | { type: "collab.edit"; ops: CanvasEditOp[] }
 
 const initialState: MindMeshState = {
   mode: "standby",
@@ -295,10 +356,213 @@ const initialState: MindMeshState = {
   lastReplaceVersion: null,
   lastAddNodePatchVersion: null,
   recentEvents: [],
+  remoteCursors: {},
+  remoteSelections: {},
+  userEditedNodeIds: new Set(),
+  isTranscribing: false,
+  transcriptionToggledBy: null,
+}
+
+function applyCanvasEditOp(
+  nodesById: Record<string, RFNode>,
+  edgesById: Record<string, RFEdge>,
+  op: CanvasEditOp
+) {
+  // Defensive: raw ops from WebSocket might not match TS types exactly
+  if (!op || typeof op !== "object" || !op.op) return
+
+  try {
+    switch (op.op) {
+      case "update_node": {
+        const existing = nodesById[op.id]
+        if (!existing) return
+        const changes = op.changes ?? {}
+        nodesById[op.id] = {
+          ...existing,
+          position: changes.position ?? existing.position,
+          data: normalizeNodeData(existing.data, changes),
+        }
+        return
+      }
+      case "add_node": {
+        nodesById[op.id] = {
+          id: op.id,
+          type: "default",
+          className: "mindmesh-node",
+          position: op.position ?? { x: 0, y: 0 },
+          hidden: false,
+          sourcePosition: HandlePosition.Right,
+          targetPosition: HandlePosition.Left,
+          data: normalizeNodeData(undefined, op.data),
+        }
+        return
+      }
+      case "remove_node": {
+        delete nodesById[op.id]
+        // Remove connected edges
+        for (const [edgeId, edge] of Object.entries(edgesById)) {
+          if (edge.source === op.id || edge.target === op.id) {
+            delete edgesById[edgeId]
+          }
+        }
+        return
+      }
+      case "add_edge": {
+        edgesById[op.id] = {
+          id: op.id,
+          source: op.source,
+          target: op.target,
+          type: "smoothstep",
+          animated: false,
+          data: {},
+          markerEnd: { type: MarkerType.ArrowClosed, color: "var(--mindmesh-edge)" },
+          style: { stroke: "var(--mindmesh-edge)", strokeWidth: 1.5 },
+        }
+        return
+      }
+      case "remove_edge": {
+        delete edgesById[op.id]
+        return
+      }
+    }
+  } catch (err) {
+    console.warn("[MindMesh] applyCanvasEditOp failed for op:", op, err)
+  }
 }
 
 function reducer(state: MindMeshState, action: Action): MindMeshState {
+  // Handle local canvas edits
+  if (action.type === "local.update_node") {
+    const nodesById = { ...state.nodesById }
+    const existing = nodesById[action.id]
+    if (!existing) return state
+    nodesById[action.id] = {
+      ...existing,
+      position: action.changes.position ?? existing.position,
+      data: normalizeNodeData(existing.data, action.changes),
+    }
+    const userEditedNodeIds = new Set(state.userEditedNodeIds)
+    userEditedNodeIds.add(action.id)
+    return { ...state, nodesById, userEditedNodeIds }
+  }
+
+  if (action.type === "local.add_node") {
+    const nodesById = { ...state.nodesById }
+    nodesById[action.node.id] = action.node
+    return { ...state, nodesById }
+  }
+
+  if (action.type === "local.remove_node") {
+    const nodesById = { ...state.nodesById }
+    const edgesById = { ...state.edgesById }
+    delete nodesById[action.id]
+    for (const [edgeId, edge] of Object.entries(edgesById)) {
+      if (edge.source === action.id || edge.target === action.id) {
+        delete edgesById[edgeId]
+      }
+    }
+    const userEditedNodeIds = new Set(state.userEditedNodeIds)
+    userEditedNodeIds.delete(action.id)
+    return { ...state, nodesById, edgesById, userEditedNodeIds }
+  }
+
+  if (action.type === "local.add_edge") {
+    const edgesById = { ...state.edgesById }
+    edgesById[action.edge.id] = action.edge
+    return { ...state, edgesById }
+  }
+
+  if (action.type === "local.remove_edge") {
+    const edgesById = { ...state.edgesById }
+    delete edgesById[action.id]
+    return { ...state, edgesById }
+  }
+
+  // Handle collab cursor updates
+  if (action.type === "collab.cursor") {
+    return {
+      ...state,
+      remoteCursors: {
+        ...state.remoteCursors,
+        [action.cursor.user_id]: action.cursor,
+      },
+    }
+  }
+
+  // Handle collab selection updates
+  if (action.type === "collab.selection") {
+    return {
+      ...state,
+      remoteSelections: {
+        ...state.remoteSelections,
+        [action.selection.user_id]: action.selection,
+      },
+    }
+  }
+
+  // Handle remote collab edits
+  if (action.type === "collab.edit") {
+    const nodesById = { ...state.nodesById }
+    const edgesById = { ...state.edgesById }
+    for (const op of action.ops) {
+      applyCanvasEditOp(nodesById, edgesById, op)
+    }
+    return { ...state, nodesById, edgesById }
+  }
+
+  // Server events
   const { event } = action
+  if (!("type" in event)) return state
+
+  // Handle collaboration server events
+  if (event.type === "collab.cursor") {
+    return {
+      ...state,
+      remoteCursors: {
+        ...state.remoteCursors,
+        [event.user_id]: {
+          user_id: event.user_id,
+          user_name: event.user_name,
+          position: event.position,
+          color: event.color,
+          lastSeen: Date.now(),
+        },
+      },
+    }
+  }
+
+  if (event.type === "collab.selection") {
+    return {
+      ...state,
+      remoteSelections: {
+        ...state.remoteSelections,
+        [event.user_id]: {
+          user_id: event.user_id,
+          user_name: event.user_name,
+          node_id: event.node_id,
+          color: event.color,
+        },
+      },
+    }
+  }
+
+  if (event.type === "collab.edit") {
+    const nodesById = { ...state.nodesById }
+    const edgesById = { ...state.edgesById }
+    for (const op of (event as CollabEditEvent).ops) {
+      applyCanvasEditOp(nodesById, edgesById, op)
+    }
+    return { ...state, nodesById, edgesById }
+  }
+
+  if (event.type === "transcription.toggle") {
+    return {
+      ...state,
+      isTranscribing: (event as TranscriptionToggleEvent).enabled,
+      transcriptionToggledBy: (event as TranscriptionToggleEvent).user_name,
+    }
+  }
+
   const withRecent = {
     ...state,
     recentEvents: pushRecent(state.recentEvents, {
@@ -334,14 +598,39 @@ function reducer(state: MindMeshState, action: Action): MindMeshState {
         ...withRecent,
         lastError: event,
       }
+    default:
+      return state
   }
 }
+
+// ─── Collaboration helpers ──────────────────────────────────────────────────
+const COLLAB_COLORS = [
+  "#6366f1", "#ec4899", "#f59e0b", "#10b981", "#ef4444",
+  "#8b5cf6", "#06b6d4", "#f97316",
+]
+
+function makeUserId() {
+  return `user-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function pickColor(userId: string): string {
+  let hash = 0
+  for (let i = 0; i < userId.length; i++) {
+    hash = userId.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return COLLAB_COLORS[Math.abs(hash) % COLLAB_COLORS.length]
+}
+
+const STABLE_USER_ID = typeof window !== "undefined"
+  ? (sessionStorage.getItem("mm-collab-user-id") || (() => { const id = makeUserId(); sessionStorage.setItem("mm-collab-user-id", id); return id })())
+  : makeUserId()
 
 type ProviderProps = {
   sessionId: string
   meetingTitle?: string
   visualizingEnabled: boolean
   children: React.ReactNode
+  userName?: string
 }
 
 export function useMindMesh() {
@@ -355,12 +644,25 @@ export function MindMeshProvider({
   meetingTitle,
   visualizingEnabled,
   children,
+  userName,
 }: ProviderProps) {
   const [state, dispatch] = useReducer(reducer, initialState)
   const demoTimersRef = useRef<number[]>([])
   const requestedVisualizingRef = useRef(false)
 
+  const userId = STABLE_USER_ID
+  const userColor = useMemo(() => pickColor(userId), [userId])
+  const displayName = userName || (typeof window !== "undefined" ? sessionStorage.getItem("mm-display-name") : null) || "You"
+
   const onServerEvent = useCallback((event: ServerEvent) => {
+    if (!event || typeof event !== "object" || !("type" in event)) return
+
+    // Handle collab events + transcription toggle
+    if (event.type === "collab.cursor" || event.type === "collab.selection" || event.type === "collab.edit" || event.type === "transcription.toggle") {
+      dispatch({ type: "server.event", event })
+      return
+    }
+
     if (event.type === "diagram.patch" || event.type === "diagram.replace") {
       startTransition(() => dispatch({ type: "server.event", event }))
       return
@@ -436,6 +738,118 @@ export function MindMeshProvider({
     }
   }, [clearDemoTimers, connectionState, send])
 
+  // ─── Canvas edit actions ────────────────────────────────────────────────────
+  const updateNode = useCallback(
+    (id: string, changes: Partial<DiagramNodeData> & { position?: { x: number; y: number } }) => {
+      dispatch({ type: "local.update_node", id, changes })
+      send({ type: "canvas.edit", ops: [{ op: "update_node", id, changes }] })
+    },
+    [send]
+  )
+
+  const addNode = useCallback(
+    (position: { x: number; y: number }, data?: Partial<DiagramNodeData>) => {
+      const id = `node-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      const nodeData = normalizeNodeData(undefined, data)
+      const node: RFNode = {
+        id,
+        type: "default",
+        className: "mindmesh-node",
+        position,
+        hidden: false,
+        sourcePosition: HandlePosition.Right,
+        targetPosition: HandlePosition.Left,
+        data: nodeData,
+      }
+      dispatch({ type: "local.add_node", node })
+      send({ type: "canvas.edit", ops: [{ op: "add_node", id, position, data: nodeData }] })
+    },
+    [send]
+  )
+
+  const removeNode = useCallback(
+    (id: string) => {
+      dispatch({ type: "local.remove_node", id })
+      send({ type: "canvas.edit", ops: [{ op: "remove_node", id }] })
+    },
+    [send]
+  )
+
+  const addEdge = useCallback(
+    (source: string, target: string) => {
+      const id = `edge-${source}-${target}-${Date.now()}`
+      const edge: RFEdge = {
+        id,
+        source,
+        target,
+        type: "smoothstep",
+        animated: false,
+        data: {},
+        markerEnd: { type: MarkerType.ArrowClosed, color: "var(--mindmesh-edge)" },
+        style: { stroke: "var(--mindmesh-edge)", strokeWidth: 1.5 },
+      }
+      dispatch({ type: "local.add_edge", edge })
+      send({ type: "canvas.edit", ops: [{ op: "add_edge", id, source, target }] })
+    },
+    [send]
+  )
+
+  const removeEdge = useCallback(
+    (id: string) => {
+      dispatch({ type: "local.remove_edge", id })
+      send({ type: "canvas.edit", ops: [{ op: "remove_edge", id }] })
+    },
+    [send]
+  )
+
+  // ─── Transcription toggle (shared across all users) ─────────────────────
+  const toggleTranscription = useCallback(() => {
+    const newEnabled = !state.isTranscribing
+    send({
+      type: "transcription.toggle",
+      enabled: newEnabled,
+      user_id: userId,
+      user_name: displayName,
+    })
+    // Also update local state immediately for responsiveness
+    dispatch({
+      type: "server.event",
+      event: {
+        type: "transcription.toggle",
+        enabled: newEnabled,
+        user_id: userId,
+        user_name: displayName,
+      },
+    })
+  }, [send, state.isTranscribing, userId, displayName])
+
+  // ─── Collaboration actions ────────────────────────────────────────────────
+  const sendCursorPosition = useCallback(
+    (position: { x: number; y: number }) => {
+      send({
+        type: "collab.cursor",
+        user_id: userId,
+        user_name: displayName,
+        position,
+        color: userColor,
+      })
+    },
+    [send, userId, displayName, userColor]
+  )
+
+  const sendSelection = useCallback(
+    (nodeId: string | null) => {
+      send({
+        type: "collab.selection",
+        user_id: userId,
+        user_name: displayName,
+        node_id: nodeId,
+        color: userColor,
+      })
+    },
+    [send, userId, displayName, userColor]
+  )
+
   const value = useMemo<MindMeshContextValue>(
     () => ({
       state,
@@ -445,8 +859,18 @@ export function MindMeshProvider({
         resetDiagram,
         runDemoScript,
       },
+      updateNode,
+      addNode,
+      removeNode,
+      addEdge,
+      removeEdge,
+      sendCursorPosition,
+      sendSelection,
+      userId,
+      userColor,
+      toggleTranscription,
     }),
-    [connectionState, resetDiagram, runDemoScript, send, state]
+    [connectionState, resetDiagram, runDemoScript, send, state, updateNode, addNode, removeNode, addEdge, removeEdge, sendCursorPosition, sendSelection, userId, userColor, toggleTranscription]
   )
 
   return <MindMeshContext.Provider value={value}>{children}</MindMeshContext.Provider>

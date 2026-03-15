@@ -16,11 +16,12 @@ const ProcessCanvas = dynamic(() => import("@/components/process-canvas"), {
   ssr: false,
 })
 
-function MindMeshSpeechBridge({ active }: { active: boolean }) {
+/** Bridges the store's shared transcription state to the Web Speech API */
+function MindMeshSpeechBridge() {
   const { send, state } = useMindMesh()
 
   useSpeech({
-    active,
+    active: state.isTranscribing,
     send,
     lastTranscript: state.lastTranscript,
   })
@@ -62,7 +63,7 @@ export default function MindMeshDemo() {
         meetingTitle={MEETING_TITLE}
         visualizingEnabled={mindMeshActive}
       >
-        <MindMeshSpeechBridge active />
+        <MindMeshSpeechBridge />
         {!mindMeshActive ? (
           <div className="flex h-screen flex-col bg-white">
             <MeetingBarStandby />

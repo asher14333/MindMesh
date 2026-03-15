@@ -5,9 +5,13 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.session_manager import SessionManager
 from app.schemas.events import (
+    CanvasEditEvent,
+    CollabCursorEvent,
+    CollabSelectionEvent,
     DiagramReplaceEvent,
     ErrorEvent,
     StatusEvent,
+    TranscriptionToggleEvent,
     UICommandEvent,
     parse_inbound_event,
 )
@@ -197,6 +201,28 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
                 )
                 continue
             logger.info("[%s] ws.recv %s", session_id, _summarize_inbound_event(event))
+
+            # --- broadcast-only events (collab + canvas edits + transcription) ---
+            if isinstance(event, (CollabCursorEvent, CollabSelectionEvent)):
+                payload = event.model_dump(mode="json")
+                await session_manager.broadcast(session_id, payload, exclude=websocket)
+                continue
+
+            if isinstance(event, TranscriptionToggleEvent):
+                # Broadcast to ALL clients (including sender) so everyone syncs
+                payload = event.model_dump(mode="json")
+                await session_manager.broadcast(session_id, payload)
+                continue
+
+            if isinstance(event, CanvasEditEvent):
+                # Broadcast the edit as a collab.edit event to other clients
+                collab_payload = {
+                    "type": "collab.edit",
+                    "user_id": "",  # will be populated by client
+                    "ops": event.ops,
+                }
+                await session_manager.broadcast(session_id, collab_payload, exclude=websocket)
+                continue
 
             # --- pipeline ---
             try:
