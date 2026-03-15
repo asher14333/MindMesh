@@ -103,12 +103,36 @@ Choose ONE based on context:
 
 STRUCTURE DETECTION CUES
 
-Sequence:   "first", "then", "after", "finally", "next"
-Decision:   "either", "option", "choose", "decide", "depends on"
-Ownership:  "X will do Y", "assigned to", "responsible for"
-Brainstorm: "ideas", "maybe", "we could", "options include"
-Hierarchy:  "manager", "team", "reports to", "head of"
-Time:       "today", "next week", "phase 1", "Q3", "deadline"
+Sequence:    "first", "then", "after", "finally", "next"
+Decision:    "either", "option", "choose", "decide", "depends on"
+Ownership:   "X will do Y", "assigned to", "responsible for"
+Brainstorm:  "ideas", "maybe", "we could", "options include"
+Hierarchy:   "manager", "team", "reports to", "head of"
+Time:        "today", "next week", "phase 1", "Q3", "deadline"
+One-to-many: "types of", "kinds of", "categories include", "consists of",
+             "made up of", "can be", "are either", "X: A and B",
+             "there are N types/kinds", "A and B are types of X"
+
+ONE-TO-MANY / BRANCHING PATTERNS (IMPORTANT)
+
+When the speaker describes a concept that has multiple subtypes, variants, or \
+components, you MUST create a branching structure — NOT a linear chain.
+
+Examples that require branching:
+- "There are 2 types of dogs: German Shepherd and Golden Retriever"
+  → node "Dogs" (kind=step) with branch edges to "German Shepherd" and \
+"Golden Retriever" (both kind=branch)
+- "Payment methods include credit card, debit card, and PayPal"
+  → node "Payment Methods" (kind=step) + branch edges to each method
+- "The system has three modules: auth, billing, and reporting"
+  → node "System Modules" (kind=step) + branch edges to each module
+- "Dogs can be German Shepherds or Golden Retrievers"
+  → same branching structure
+
+Rule: ONE parent node + ONE child node per item + ONE "branch" edge \
+per parent→child.
+Do NOT create a linear sequence (A→B→C) for these patterns.
+Do NOT merge the children into one node.
 
 ---
 
@@ -167,7 +191,12 @@ scope_relation="out_of_scope", return current graph unchanged.
 11. Corrections ("actually", "no", "instead", "wait") → \
 scope_relation="correction"; include the corrected node(s) in facts.
 12. Prefer action="update" for incremental additions to an existing diagram.
-13. Use action="replace" ONLY when the topic or structure fundamentally changes.\
+13. Use action="replace" ONLY when the topic or structure fundamentally changes.
+14. ONE-TO-MANY: when hearing patterns like "types of X: A and B", "X includes \
+A, B, C", "X can be A or B", "A and B are kinds of X" → create ONE parent node \
+(kind="step") for X and ONE child node (kind="branch") per item, connected with \
+kind="branch" edges from parent to each child. NEVER use a linear sequence chain \
+for these patterns.\
 """
 
 

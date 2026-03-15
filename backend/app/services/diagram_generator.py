@@ -320,6 +320,13 @@ class DiagramGenerator:
         return self._flowchart_facts(normalized)
 
     def _flowchart_facts(self, utterances: list[str]) -> AIFacts:
+        # First pass: look for one-to-many / branching patterns across all utterances.
+        for utterance in utterances:
+            branch = self._detect_one_to_many(utterance)
+            if branch:
+                return self._branching_facts(branch)
+
+        # Fallback: linear chain
         facts = AIFacts()
         previous_key: Optional[str] = None
         for idx, utterance in enumerate(utterances[: self.MAX_NODES], start=1):
@@ -341,6 +348,121 @@ class DiagramGenerator:
                     )
                 )
             previous_key = key
+        return facts
+
+    def _detect_one_to_many(
+        self, text: str
+    ) -> Optional[tuple[str, list[str]]]:
+        """Return (parent_label, [child_labels]) when text expresses a
+        one-to-many / categorisation relationship, else None."""
+        cleaned = text.strip().rstrip(".!?")
+
+        # Pattern 1: "there are N types/kinds/categories of X: A, B, C"
+        m = re.search(
+            r"there\s+(?:are\s+)?(?:\w+\s+)?(?:types?|kinds?|categor(?:y|ies))\s+of\s+(.+?):\s+(.+)",
+            cleaned,
+            re.IGNORECASE,
+        )
+        if m:
+            children = self._parse_list_items(m.group(2))
+            if len(children) >= 2:
+                return (self._titleize(m.group(1).strip()), children)
+
+        # Pattern 2: "A and B are types/kinds/categories of X"
+        m = re.search(
+            r"(.+?)\s+are\s+(?:types?|kinds?|categor(?:y|ies))\s+of\s+(.+)",
+            cleaned,
+            re.IGNORECASE,
+        )
+        if m:
+            children = self._parse_list_items(m.group(1))
+            if len(children) >= 2:
+                return (self._titleize(m.group(2).strip()), children)
+
+        # Pattern 3: "X can be A or B" / "X is either A or B"
+        m = re.search(
+            r"(.+?)\s+(?:can\s+be|is\s+(?:either|one\s+of)|are\s+(?:either|one\s+of))\s+(.+)",
+            cleaned,
+            re.IGNORECASE,
+        )
+        if m:
+            children = self._parse_list_items(m.group(2))
+            if len(children) >= 2:
+                return (self._titleize(m.group(1).strip()), children)
+
+        # Pattern 4: "X includes/consists of/is made up of A, B, C"
+        m = re.search(
+            r"(.+?)\s+(?:includes?|consists?\s+of|is\s+made\s+up\s+of|is\s+comprised?\s+of|has)\s+(.+)",
+            cleaned,
+            re.IGNORECASE,
+        )
+        if m:
+            children = self._parse_list_items(m.group(2))
+            if len(children) >= 2:
+                return (self._titleize(m.group(1).strip()), children)
+
+        # Pattern 5: "X: A, B and C"  (colon followed by 2+ comma/and-separated items)
+        m = re.match(
+            r"^(.+?):\s+(.+)",
+            cleaned,
+            re.IGNORECASE,
+        )
+        if m:
+            parent_candidate = m.group(1).strip()
+            children = self._parse_list_items(m.group(2))
+            # Only treat as one-to-many when 2+ children and the parent is short
+            if len(children) >= 2 and len(parent_candidate.split()) <= 8:
+                return (self._titleize(parent_candidate), children)
+
+        return None
+
+    def _parse_list_items(self, text: str) -> list[str]:
+        """Split "A, B, and C" or "A or B" into ["A", "B", "C"]."""
+        # Split on commas and standalone conjunctions
+        parts = re.split(r",\s*|\s+and\s+|\s+or\s+", text.strip())
+        items: list[str] = []
+        for part in parts:
+            part = part.strip().rstrip(".!?")
+            # Strip leading articles AND any stray leading conjunction
+            part = re.sub(
+                r"^(and|or|a|an|the)\s+", "", part, flags=re.IGNORECASE
+            )
+            part = part.strip()
+            if part:
+                items.append(self._titleize(part))
+        return items
+
+    def _branching_facts(self, branch: tuple[str, list[str]]) -> AIFacts:
+        """Build AIFacts for a parent → [children] branching pattern."""
+        parent_label, child_labels = branch
+        parent_key = self._semantic_key(parent_label, fallback="parent")
+        facts = AIFacts(
+            nodes=[
+                AIFactNode(
+                    key=parent_key,
+                    label=self._truncate(parent_label),
+                    kind="step",
+                )
+            ]
+        )
+        for idx, child_label in enumerate(
+            child_labels[: self.MAX_NODES - 1], start=1
+        ):
+            child_key = self._semantic_key(child_label, fallback=f"branch_{idx}")
+            facts.nodes.append(
+                AIFactNode(
+                    key=child_key,
+                    label=self._truncate(child_label),
+                    kind="branch",
+                )
+            )
+            facts.edges.append(
+                AIFactEdge(
+                    source_key=parent_key,
+                    target_key=child_key,
+                    kind="branch",
+                )
+            )
         return facts
 
     def _timeline_facts(self, utterances: list[str]) -> AIFacts:
