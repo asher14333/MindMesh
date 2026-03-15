@@ -37,11 +37,11 @@ export default function MindMeshDemo() {
 
   if (callEnded) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-background">
-        <p className="text-lg font-medium text-foreground">You left the call</p>
+      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-white">
+        <p className="text-lg font-medium text-neutral-900">You left the call</p>
         <button
           onClick={() => { setCallEnded(false); setMindMeshActive(false) }}
-          className="rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium text-secondary hover:bg-muted"
+          className="rounded-lg border border-neutral-200 bg-white px-4 py-2 text-sm font-semibold text-neutral-700 hover:bg-neutral-50 transition-colors"
         >
           Rejoin
         </button>
@@ -58,7 +58,7 @@ export default function MindMeshDemo() {
       >
         <MindMeshSpeechBridge active />
         {!mindMeshActive ? (
-          <div className="flex h-screen flex-col bg-background">
+          <div className="flex h-screen flex-col bg-white">
             <MeetingBarStandby />
             <main className="relative flex-1 overflow-hidden">
               <MeetingStage />
@@ -69,7 +69,7 @@ export default function MindMeshDemo() {
             </main>
           </div>
         ) : (
-          <div className="flex h-screen flex-col bg-background">
+          <div className="flex h-screen flex-col bg-white">
             <MeetingBar onBack={() => setMindMeshActive(false)} />
             <ParticipantStrip />
             <main className="relative flex-1 overflow-hidden">
