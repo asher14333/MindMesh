@@ -15,8 +15,7 @@ MINDMESH_LLM_MODEL=gpt-5-mini
 ```env
 NEXT_PUBLIC_MINDMESH_WS_URL=ws://localhost:8000
 NEXT_PUBLIC_MINDMESH_DEBUG=1
-```
-
+```#
 ## Run
 
 1. Start the backend:
