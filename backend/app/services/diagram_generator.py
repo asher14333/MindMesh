@@ -136,16 +136,15 @@ class DiagramGenerator:
             )
             return None
 
-        layout_ops = sum(
-            1 for op in ops if op.op in ("add_node", "remove_node")
-        )
-        if current.nodes and layout_ops / len(current.nodes) > 0.3:
+        layout_ops = sum(1 for op in ops if op.op in ("add_node", "remove_node"))
+        allowed_layout_ops = max(2, int(len(current.nodes) * 0.3))
+        if current.nodes and layout_ops > allowed_layout_ops:
             logger.info(
                 "diagram_generator: AI facts patch skipped (structural change >30%%) | "
-                "layout_ops=%s current_nodes=%s ratio=%.2f → caller should use replace",
+                "layout_ops=%s current_nodes=%s allowed=%s → caller should use replace",
                 layout_ops,
                 len(current.nodes),
-                layout_ops / len(current.nodes),
+                allowed_layout_ops,
             )
             return None
 
@@ -166,23 +165,10 @@ class DiagramGenerator:
     def generate_document(
         self, intent: IntentResult, transcript: str
     ) -> DiagramDocument:
-        logger.info(
-            "diagram_generator: using rules fallback (generate_document) | "
-            "diagram_type=%s reason=%s transcript_len=%s",
-            intent.diagram_type.value,
-            intent.reason or "unknown",
-            len(transcript),
-        )
-        dt = intent.diagram_type
-        if dt == DiagramType.MINDMAP:
-            return self._build_mindmap(transcript)
-        if dt == DiagramType.ORGCHART:
-            return self._build_orgchart(transcript)
-        if dt == DiagramType.TIMELINE:
-            return self._build_timeline(transcript)
-        nodes, edges = self._build_linear_graph(transcript)
-        return DiagramDocument(
-            diagram_type=dt, nodes=nodes, edges=edges, version=1
+        utterances = self._utterances_from_transcript(transcript)
+        return self.generate_document_from_utterances(
+            intent.diagram_type,
+            utterances,
         )
 
     def generate_patch(
@@ -203,42 +189,49 @@ class DiagramGenerator:
                 intent.diagram_type.value,
             )
             return None
+        utterances = self._utterances_from_transcript(transcript_delta)
+        if not utterances:
+            return None
+        return self.generate_patch_from_utterances(
+            intent.diagram_type,
+            utterances,
+            current,
+        )
 
+    def generate_document_from_utterances(
+        self,
+        diagram_type: DiagramType,
+        utterances: list[str],
+        current: Optional[DiagramDocument] = None,
+    ) -> DiagramDocument:
+        facts = self._facts_from_utterances(diagram_type, utterances)
         logger.info(
-            "diagram_generator: using rules fallback (generate_patch) | "
-            "diagram_type=%s current_version=%s delta_len=%s",
-            intent.diagram_type.value,
-            current.version,
-            len(transcript_delta),
+            "diagram_generator: using rules fallback (generate_document_from_utterances) | "
+            "diagram_type=%s utterances=%s nodes=%s",
+            diagram_type.value,
+            len(utterances),
+            len(facts.nodes),
         )
-        label = self._truncate(transcript_delta)
-        node_id = f"n-append-{len(current.nodes) + 1}"
-        node = DiagramNode(
-            id=node_id, data=NodeData(label=label, kind="step")
-        )
-        ops: list[PatchOp] = [
-            PatchOp(op="add_node", data=node.model_dump(by_alias=True))
-        ]
+        return self.generate_from_facts(facts, diagram_type, current=current)
 
-        if current.nodes:
-            prev = current.nodes[-1]
-            edge = DiagramEdge(
-                id=f"e-{prev.id}--{node_id}",
-                source=prev.id,
-                target=node_id,
-                data=EdgeData(kind="sequence"),
-            )
-            ops.append(PatchOp(op="add_edge", data=edge.model_dump()))
-
-        return DiagramPatch(
-            diagram_id=current.diagram_id,
-            diagram_type=intent.diagram_type,
-            base_version=current.version,
-            ops=ops,
-            version=current.version + 1,
-            reason="append",
-            layout_changed=True,
+    def generate_patch_from_utterances(
+        self,
+        diagram_type: DiagramType,
+        utterances: list[str],
+        current: DiagramDocument,
+    ) -> Optional[DiagramPatch]:
+        facts = self._facts_from_utterances(diagram_type, utterances)
+        logger.info(
+            "diagram_generator: using rules fallback (generate_patch_from_utterances) | "
+            "diagram_type=%s utterances=%s nodes=%s",
+            diagram_type.value,
+            len(utterances),
+            len(facts.nodes),
         )
+        patch = self.generate_patch_from_facts(facts, diagram_type, current)
+        if patch:
+            patch.reason = "rules_incremental"
+        return patch
 
     # ------------------------------------------------------------------
     # Fact → schema helpers
@@ -286,132 +279,266 @@ class DiagramGenerator:
             or a.data.kind != b.data.kind
             or a.data.status != b.data.status
             or a.data.description != b.data.description
+            or a.data.lane != b.data.lane
+            or a.data.actor != b.data.actor
+            or a.data.time_label != b.data.time_label
         )
 
     # ------------------------------------------------------------------
     # Rules-based builders
     # ------------------------------------------------------------------
 
-    def _build_linear_graph(
-        self, transcript: str
-    ) -> tuple[list[DiagramNode], list[DiagramEdge]]:
-        steps = self._extract_steps(transcript)
-        nodes = [
-            DiagramNode(
-                id=f"n-step-{i}",
-                data=NodeData(label=label, kind="step"),
-            )
-            for i, label in enumerate(steps, 1)
-        ]
-        edges = [
-            DiagramEdge(
-                id=f"e-step-{i}--step-{i + 1}",
-                source=f"n-step-{i}",
-                target=f"n-step-{i + 1}",
-                data=EdgeData(kind="sequence"),
-            )
-            for i in range(1, len(nodes))
-        ]
-        return nodes, edges
+    def _facts_from_utterances(
+        self, diagram_type: DiagramType, utterances: list[str]
+    ) -> AIFacts:
+        normalized = self._normalize_utterances(utterances)
+        if diagram_type == DiagramType.MINDMAP:
+            return self._mindmap_facts(normalized)
+        if diagram_type == DiagramType.ORGCHART:
+            return self._orgchart_facts(normalized)
+        if diagram_type == DiagramType.TIMELINE:
+            return self._timeline_facts(normalized)
+        return self._flowchart_facts(normalized)
 
-    def _build_mindmap(self, transcript: str) -> DiagramDocument:
-        parts = self._extract_steps(transcript)
-        root = DiagramNode(
-            id="n-root", data=NodeData(label="Meeting Topic", kind="root")
-        )
-        nodes: list[DiagramNode] = [root]
-        edges: list[DiagramEdge] = []
-        for i, label in enumerate(parts[:6], 1):
-            nid = f"n-branch-{i}"
-            nodes.append(
-                DiagramNode(id=nid, data=NodeData(label=label, kind="branch"))
-            )
-            edges.append(
-                DiagramEdge(
-                    id=f"e-root--branch-{i}",
-                    source="n-root",
-                    target=nid,
-                    data=EdgeData(kind="depends_on"),
+    def _flowchart_facts(self, utterances: list[str]) -> AIFacts:
+        facts = AIFacts()
+        previous_key: Optional[str] = None
+        for idx, utterance in enumerate(utterances[: self.MAX_NODES], start=1):
+            label = self._clean_flow_label(utterance)
+            key = self._semantic_key(label, fallback=f"step_{idx}")
+            facts.nodes.append(
+                AIFactNode(
+                    key=key,
+                    label=label,
+                    kind="step",
                 )
             )
-        return DiagramDocument(
-            diagram_type=DiagramType.MINDMAP,
-            nodes=nodes,
-            edges=edges,
-            version=1,
-        )
+            if previous_key:
+                facts.edges.append(
+                    AIFactEdge(
+                        source_key=previous_key,
+                        target_key=key,
+                        kind="sequence",
+                    )
+                )
+            previous_key = key
+        return facts
 
-    def _build_orgchart(self, transcript: str) -> DiagramDocument:
-        parts = self._extract_steps(transcript)
-        root = DiagramNode(
-            id="n-org-root", data=NodeData(label="Team", kind="root")
-        )
-        nodes: list[DiagramNode] = [root]
-        edges: list[DiagramEdge] = []
-        for i, label in enumerate(parts[:5], 1):
-            nid = f"n-person-{i}"
-            nodes.append(
-                DiagramNode(
-                    id=nid, data=NodeData(label=label, kind="person")
+    def _timeline_facts(self, utterances: list[str]) -> AIFacts:
+        facts = AIFacts()
+        previous_key: Optional[str] = None
+        for idx, utterance in enumerate(utterances[: self.MAX_NODES], start=1):
+            label = self._clean_flow_label(utterance)
+            key = self._semantic_key(label, fallback=f"milestone_{idx}")
+            facts.nodes.append(
+                AIFactNode(
+                    key=key,
+                    label=label,
+                    kind="milestone",
+                    time_label=self._time_label_for(utterance),
                 )
             )
-            edges.append(
-                DiagramEdge(
-                    id=f"e-org-root--person-{i}",
-                    source="n-org-root",
-                    target=nid,
-                    data=EdgeData(kind="reports_to"),
+            if previous_key:
+                facts.edges.append(
+                    AIFactEdge(
+                        source_key=previous_key,
+                        target_key=key,
+                        kind="sequence",
+                    )
+                )
+            previous_key = key
+        return facts
+
+    def _mindmap_facts(self, utterances: list[str]) -> AIFacts:
+        facts = AIFacts(
+            nodes=[AIFactNode(key="meeting_topic", label="Meeting Topic", kind="root")]
+        )
+        for idx, utterance in enumerate(utterances[: self.MAX_NODES - 1], start=1):
+            label = self._clean_flow_label(utterance)
+            key = self._semantic_key(label, fallback=f"branch_{idx}")
+            facts.nodes.append(
+                AIFactNode(
+                    key=key,
+                    label=label,
+                    kind="branch",
                 )
             )
-        return DiagramDocument(
-            diagram_type=DiagramType.ORGCHART,
-            nodes=nodes,
-            edges=edges,
-            version=1,
-        )
+            facts.edges.append(
+                AIFactEdge(
+                    source_key="meeting_topic",
+                    target_key=key,
+                    kind="depends_on",
+                )
+            )
+        return facts
 
-    def _build_timeline(self, transcript: str) -> DiagramDocument:
-        parts = self._extract_steps(transcript)
-        nodes = [
-            DiagramNode(
-                id=f"n-milestone-{i}",
-                data=NodeData(label=label, kind="milestone"),
+    def _orgchart_facts(self, utterances: list[str]) -> AIFacts:
+        facts = AIFacts()
+        seen_people: set[str] = set()
+
+        for utterance in utterances:
+            relation = self._org_relation_from_utterance(utterance)
+            if relation is None:
+                continue
+
+            person_label, manager_label = relation
+            person_key = self._semantic_key(person_label, fallback="person")
+            manager_key = self._semantic_key(manager_label, fallback="manager")
+
+            if person_key not in seen_people:
+                facts.nodes.append(
+                    AIFactNode(
+                        key=person_key,
+                        label=person_label,
+                        kind="person",
+                        actor=person_label,
+                    )
+                )
+                seen_people.add(person_key)
+            if manager_key not in seen_people:
+                facts.nodes.append(
+                    AIFactNode(
+                        key=manager_key,
+                        label=manager_label,
+                        kind="person",
+                        actor=manager_label,
+                    )
+                )
+                seen_people.add(manager_key)
+
+            facts.edges.append(
+                AIFactEdge(
+                    source_key=person_key,
+                    target_key=manager_key,
+                    kind="reports_to",
+                )
             )
-            for i, label in enumerate(parts[:8], 1)
-        ]
-        edges = [
-            DiagramEdge(
-                id=f"e-milestone-{i}--milestone-{i + 1}",
-                source=f"n-milestone-{i}",
-                target=f"n-milestone-{i + 1}",
-                data=EdgeData(kind="sequence"),
+
+        if facts.nodes:
+            return facts
+
+        facts.nodes.append(AIFactNode(key="team_root", label="Team", kind="root"))
+        for idx, utterance in enumerate(utterances[: self.MAX_NODES - 1], start=1):
+            label = self._clean_flow_label(utterance)
+            key = self._semantic_key(label, fallback=f"person_{idx}")
+            facts.nodes.append(
+                AIFactNode(
+                    key=key,
+                    label=label,
+                    kind="person",
+                    actor=label,
+                )
             )
-            for i in range(1, len(nodes))
-        ]
-        return DiagramDocument(
-            diagram_type=DiagramType.TIMELINE,
-            nodes=nodes,
-            edges=edges,
-            version=1,
-        )
+            facts.edges.append(
+                AIFactEdge(
+                    source_key=key,
+                    target_key="team_root",
+                    kind="reports_to",
+                )
+            )
+        return facts
 
     # ------------------------------------------------------------------
     # Text helpers
     # ------------------------------------------------------------------
 
-    def _extract_steps(self, text: str) -> list[str]:
-        cleaned = text.strip()
-        if not cleaned:
-            return ["Awaiting transcript"]
-        normalized = re.sub(
-            r"\b(first|then|after|next|finally)\b",
-            "|",
+    def _utterances_from_transcript(self, transcript: str) -> list[str]:
+        parts = re.split(r"(?<=[.!?])\s+", transcript.strip())
+        return [part.strip() for part in parts if part.strip()]
+
+    def _normalize_utterances(self, utterances: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for utterance in utterances:
+            cleaned = " ".join(utterance.split())
+            if not cleaned:
+                continue
+            if self._is_correction(cleaned):
+                replacement = self._strip_correction_prefix(cleaned)
+                if normalized:
+                    normalized[-1] = replacement
+                else:
+                    normalized.append(replacement)
+                continue
+            normalized.append(cleaned)
+        return normalized[: self.MAX_NODES] or ["Awaiting transcript"]
+
+    def _clean_flow_label(self, text: str) -> str:
+        cleaned = self._strip_correction_prefix(text)
+        cleaned = cleaned.strip().rstrip(".!?")
+        cleaned = re.sub(
+            r"^(first|then|next|finally)\s+",
+            "",
             cleaned,
             flags=re.IGNORECASE,
         )
-        parts = re.split(r"[|.!?]\s*", normalized)
-        steps = [self._truncate(p) for p in parts if p.strip()]
-        return steps[: self.MAX_NODES] or [self._truncate(cleaned)]
+        if re.match(r"^(after|before|once)\b", cleaned, flags=re.IGNORECASE):
+            parts = cleaned.split(",", 1)
+            if len(parts) == 2 and parts[1].strip():
+                cleaned = parts[1].strip()
+        cleaned = cleaned[:1].upper() + cleaned[1:] if cleaned else "Awaiting transcript"
+        return self._truncate(cleaned)
+
+    def _org_relation_from_utterance(
+        self, utterance: str
+    ) -> Optional[tuple[str, str]]:
+        cleaned = self._strip_correction_prefix(utterance).strip().rstrip(".!?")
+        report_match = re.search(
+            r"\b(?P<person>[A-Za-z][A-Za-z0-9&/ -]+?)\s+reports to\s+(?P<manager>[A-Za-z][A-Za-z0-9&/ -]+?)(?:\s+in\s+the\s+(?:organization|org)\s+chart)?$",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        if report_match:
+            return (
+                self._titleize(report_match.group("person")),
+                self._titleize(report_match.group("manager")),
+            )
+
+        manage_match = re.search(
+            r"\b(?P<manager>[A-Za-z][A-Za-z0-9&/ -]+?)\s+manages\s+(?P<person>[A-Za-z][A-Za-z0-9&/ -]+?)(?:\s+in\s+the\s+(?:organization|org)\s+chart)?$",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        if manage_match:
+            return (
+                self._titleize(manage_match.group("person")),
+                self._titleize(manage_match.group("manager")),
+            )
+        return None
+
+    def _time_label_for(self, utterance: str) -> Optional[str]:
+        match = re.search(
+            r"\b(today|tomorrow|yesterday|q[1-4]|january|february|march|april|may|june|july|august|september|october|november|december|week \d+|month \d+)\b",
+            utterance,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        return self._titleize(match.group(1))
+
+    def _semantic_key(self, text: str, fallback: str) -> str:
+        slug = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+        return slug or fallback
+
+    def _is_correction(self, text: str) -> bool:
+        return bool(
+            re.match(
+                r"^(actually|sorry|correction|instead|rather|no[, ]|wait[, ])\b",
+                text,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    def _strip_correction_prefix(self, text: str) -> str:
+        return re.sub(
+            r"^(actually|sorry|correction|instead|rather|wait|no)\b[,\s:.-]*",
+            "",
+            text.strip(),
+            flags=re.IGNORECASE,
+        )
+
+    def _titleize(self, text: str) -> str:
+        normalized = " ".join(text.split()).strip(" ,.")
+        return normalized[:1].upper() + normalized[1:] if normalized else normalized
 
     def _truncate(self, text: str) -> str:
         normalized = " ".join(text.split())

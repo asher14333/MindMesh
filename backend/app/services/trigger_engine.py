@@ -37,12 +37,6 @@ class TriggerEngine:
         if isinstance(event, SpeechFinalEvent):
             return TriggerDecision(should_generate=True, reason="final_transcript")
 
-        if unprocessed_text.endswith((".", "!", "?")):
-            return TriggerDecision(should_generate=True, reason="sentence_boundary")
-
-        if len(unprocessed_text) >= self.settings.min_new_chars:
-            return TriggerDecision(should_generate=True, reason="enough_new_text")
-
         return TriggerDecision(should_generate=False)
 
     def check_pause(self, state: SessionState, unread_text: str) -> bool:

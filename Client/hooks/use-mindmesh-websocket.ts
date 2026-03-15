@@ -19,6 +19,37 @@ type Params = {
   onOpen?: (send: (payload: ClientEvent) => boolean) => void
 }
 
+function summarizeClientEvent(payload: ClientEvent): string {
+  switch (payload.type) {
+    case "session.start":
+      return `session.start meeting_title=${payload.meeting_title ?? "-"}`
+    case "session.stop":
+      return "session.stop"
+    case "speech.partial":
+    case "speech.final":
+      return `${payload.type} speaker=${payload.speaker ?? "-"} len=${payload.text.length} text=${JSON.stringify(payload.text)}`
+    case "ui.command":
+      return `ui.command command=${payload.command} payload=${JSON.stringify(payload.payload ?? {})}`
+  }
+}
+
+function summarizeServerEvent(event: ServerEvent): string {
+  switch (event.type) {
+    case "status":
+      return `status mode=${event.mode} message=${event.message} diagram_type=${event.diagram_type ?? "null"}`
+    case "transcript.update":
+      return `transcript.update final=${event.is_final} speaker=${event.speaker ?? "-"} len=${event.text.length}`
+    case "intent.result":
+      return `intent.result diagram_type=${event.result.diagram_type} action=${event.result.action} confidence=${event.result.confidence.toFixed(2)}`
+    case "diagram.replace":
+      return `diagram.replace version=${event.diagram.version} nodes=${event.diagram.nodes.length} edges=${event.diagram.edges.length}`
+    case "diagram.patch":
+      return `diagram.patch base=${event.patch.base_version} version=${event.patch.version} ops=${event.patch.ops.length}`
+    case "error":
+      return `error message=${event.message}`
+  }
+}
+
 export function useMindMeshWebSocket({
   sessionId,
   enabled,
@@ -44,9 +75,20 @@ export function useMindMeshWebSocket({
 
   const send = useCallback((payload: ClientEvent) => {
     const ws = wsRef.current
-    if (!ws) return false
-    if (ws.readyState !== WebSocket.OPEN) return false
+    if (!ws) {
+      console.warn("[mindmesh] send dropped: no websocket", summarizeClientEvent(payload))
+      return false
+    }
+    if (ws.readyState !== WebSocket.OPEN) {
+      console.warn(
+        "[mindmesh] send dropped: socket not open",
+        `readyState=${ws.readyState}`,
+        summarizeClientEvent(payload)
+      )
+      return false
+    }
 
+    console.log("[mindmesh] ws.send", summarizeClientEvent(payload))
     ws.send(JSON.stringify(payload))
     return true
   }, [])
@@ -77,12 +119,19 @@ export function useMindMeshWebSocket({
       setConnectionState(isReconnect ? "reconnecting" : "connecting")
 
       const url = buildMindMeshWsUrl(sessionId)
+      console.log(
+        "[mindmesh] ws.connect",
+        `session=${sessionId}`,
+        `reconnect=${isReconnect}`,
+        `url=${url}`
+      )
       const ws = new WebSocket(url)
       wsRef.current = ws
 
       ws.onopen = () => {
         backoffMsRef.current = 250
         setConnectionState("open")
+        console.log("[mindmesh] ws.open", `session=${sessionId}`, `url=${url}`)
         onOpenRef.current?.(send)
       }
 
@@ -103,15 +152,24 @@ export function useMindMeshWebSocket({
           return
         }
 
+        console.log("[mindmesh] ws.recv", summarizeServerEvent(event))
         onServerEventRef.current(event)
       }
 
       ws.onerror = () => {
         // Most errors will be followed by onclose; keep this lightweight.
+        console.warn("[mindmesh] ws.error", `session=${sessionId}`, `url=${url}`)
         setConnectionState("error")
       }
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
+        console.warn(
+          "[mindmesh] ws.close",
+          `session=${sessionId}`,
+          `code=${event.code}`,
+          `reason=${event.reason || "-"}`,
+          `wasClean=${event.wasClean}`
+        )
         wsRef.current = null
         if (!shouldReconnectRef.current) {
           setConnectionState("closed")
@@ -142,4 +200,3 @@ export function useMindMeshWebSocket({
 
   return { connectionState, send }
 }
-

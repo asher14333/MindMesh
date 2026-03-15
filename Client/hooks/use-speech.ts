@@ -6,8 +6,8 @@
  * What it does:
  *  1. Starts SpeechRecognition when `active` is true.
  *  2. Logs your own speech and all remote speakers to the browser console.
- *  3. Sends speech events tagged with a per-tab `speaker` id through the
- *     shared MindMesh WebSocket session.
+ *  3. Keeps interim hypotheses local-only and sends finalized speech tagged
+ *     with a per-tab `speaker` id through the shared MindMesh WebSocket session.
  *
  * Console output (DevTools → Console):
  *   🎤 You (partial)  "first sales hands off to"
@@ -118,18 +118,21 @@ export function useSpeech({ active, send, lastTranscript }: UseSpeechParams) {
 
         if (result.isFinal) {
           console.log(`🎤 You (FINAL)    "${text}"`)
-          send({
+          const sent = send({
             type: "speech.final",
             text,
             speaker: mySpeakerIdRef.current,
           })
+          if (!sent) {
+            console.warn(
+              "[MindMesh] Failed to send speech.final",
+              `speaker=${mySpeakerIdRef.current}`,
+              `len=${text.length}`,
+              `text=${JSON.stringify(text)}`
+            )
+          }
         } else {
           console.log(`🎤 You (partial)  "${text}"`)
-          send({
-            type: "speech.partial",
-            text,
-            speaker: mySpeakerIdRef.current,
-          })
         }
       }
     }

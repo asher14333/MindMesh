@@ -2,7 +2,7 @@ import logging
 from typing import Optional
 
 from app.config import Settings
-from app.schemas.diagram import DiagramDocument, DiagramType
+from app.schemas.diagram import DiagramDocument, DiagramPatch, DiagramType
 from app.schemas.events import (
     DiagramPatchEvent,
     DiagramReplaceEvent,
@@ -81,16 +81,21 @@ class SessionPipeline:
 
         # ---- transcript ----
 
-        if isinstance(event, (SpeechPartialEvent, SpeechFinalEvent)):
-            text = self.transcript_buffer.append(state, event.text)
-            kind = "FINAL  " if isinstance(event, SpeechFinalEvent) else "partial"
+        if isinstance(event, SpeechPartialEvent):
+            text = self.transcript_buffer.preview_partial(state, event.text)
             if text:
                 speaker_label = f" [{event.speaker}]" if event.speaker else ""
-                logger.info("[%s] speech.%s%s | %r", state.session_id, kind, speaker_label, text)
+                logger.info("[%s] speech.partial%s | dropped=%r", state.session_id, speaker_label, text)
+
+        if isinstance(event, SpeechFinalEvent):
+            text = self.transcript_buffer.commit_final(state, event.text)
+            if text:
+                speaker_label = f" [{event.speaker}]" if event.speaker else ""
+                logger.info("[%s] speech.FINAL%s | %r", state.session_id, speaker_label, text)
                 outbound.append(
                     TranscriptUpdateEvent(
                         text=text,
-                        is_final=isinstance(event, SpeechFinalEvent),
+                        is_final=True,
                         speaker=event.speaker,
                     )
                 )
@@ -101,6 +106,7 @@ class SessionPipeline:
         decision = self.trigger_engine.should_generate(state, event, unread_text)
         if not decision.should_generate:
             return outbound
+        self._record_trigger(state, decision.reason)
 
         logger.info(
             "[%s] trigger=%s | unread=%d chars",
@@ -114,31 +120,32 @@ class SessionPipeline:
         # =============================================================
 
         # STEP 1 — delta extraction & fast relevance filter
-        delta = state.raw_transcript[state.last_processed_offset :]
+        delta = self.transcript_buffer.pending_delta(state)
         if not delta.strip():
-            state.last_processed_offset = len(state.raw_transcript)
+            state.last_processed_offset = len(state.committed_transcript)
             return outbound
 
         # STEP 2 — rules-based classification
         intent = self.intent_classifier.classify(delta, state)
 
-        # STEP 3 — model fallback (low-confidence, correction, switch)
-        route = self.intent_classifier.choose_route(intent, state)
+        # STEP 3 — model-assisted interpretation when available
         ai_response: Optional[AIResponse] = None
 
-        if route in ("fallback", "repair") and self.model_orchestrator.is_available():
+        if self.model_orchestrator.is_available():
             state.last_request_id += 1
+            state.telemetry.model_calls += 1
             ai_response = await self.model_orchestrator.generate(
                 delta=delta,
-                diagram_type=state.locked_diagram_type or DiagramType.NONE,
+                diagram_type=state.locked_diagram_type or intent.diagram_type,
                 graph_summary=self._build_graph_summary(state),
                 scope_summary=state.scope_summary,
                 request_id=state.last_request_id,
             )
             if ai_response and ai_response.request_id == state.last_request_id:
+                state.telemetry.model_successes += 1
                 intent = self._merge_ai_result(intent, ai_response)
 
-        state.last_processed_offset = len(state.raw_transcript)
+        state.last_processed_offset = len(state.committed_transcript)
 
         if intent.scope_relation == ScopeRelation.OUT_OF_SCOPE:
             return outbound
@@ -163,11 +170,19 @@ class SessionPipeline:
             or state.diagram.diagram_type != effective_type
             or intent.action == IntentAction.REPLACE
         )
+        used_ai_facts = bool(ai_response and ai_response.facts.nodes)
 
         if needs_replace:
             diagram = self._build_full(ai_response, effective_type, state)
             diagram = self.render_adapter.layout_document(diagram)
             self._commit_diagram(state, diagram, effective_type)
+            self._record_generation(
+                state=state,
+                trigger_reason=decision.reason,
+                event_type="replace",
+                used_ai_facts=used_ai_facts,
+                is_correction=intent.scope_relation == ScopeRelation.CORRECTION,
+            )
             logger.info(
                 "[%s] diagram.replace type=%s nodes=%d",
                 state.session_id,
@@ -177,23 +192,39 @@ class SessionPipeline:
             outbound.append(DiagramReplaceEvent(diagram=diagram))
             return outbound
 
-        patch = self._build_patch(
-            ai_response, intent, effective_type, unread_text, state
-        )
+        patch = self._build_patch(ai_response, effective_type, state)
         if patch and patch.ops:
             if patch.base_version != state.diagram.version:
+                logger.warning(
+                    "[%s] patch.base_version mismatch patch_base=%d state_version=%d -> replace",
+                    state.session_id,
+                    patch.base_version,
+                    state.diagram.version,
+                )
                 diagram = self._build_full(ai_response, effective_type, state)
                 diagram = self.render_adapter.layout_document(diagram)
                 self._commit_diagram(state, diagram, effective_type)
+                self._record_generation(
+                    state=state,
+                    trigger_reason=decision.reason,
+                    event_type="replace",
+                    used_ai_facts=used_ai_facts,
+                    is_correction=intent.scope_relation == ScopeRelation.CORRECTION,
+                )
                 outbound.append(DiagramReplaceEvent(diagram=diagram))
                 return outbound
 
-            state.diagram = self.render_adapter.apply_patch(
-                state.diagram, patch
-            )
+            state.diagram = self.render_adapter.apply_patch(state.diagram, patch)
             state.diagram_type = effective_type
             self.transcript_buffer.mark_generated(state)
             self.trigger_engine.arm_cooldown(state)
+            self._record_generation(
+                state=state,
+                trigger_reason=decision.reason,
+                event_type="patch",
+                used_ai_facts=used_ai_facts,
+                is_correction=False,
+            )
             logger.info("[%s] diagram.patch ops=%d", state.session_id, len(patch.ops))
             outbound.append(DiagramPatchEvent(patch=patch))
             return outbound
@@ -201,6 +232,13 @@ class SessionPipeline:
         diagram = self._build_full(ai_response, effective_type, state)
         diagram = self.render_adapter.layout_document(diagram)
         self._commit_diagram(state, diagram, effective_type)
+        self._record_generation(
+            state=state,
+            trigger_reason=decision.reason,
+            event_type="replace",
+            used_ai_facts=used_ai_facts,
+            is_correction=intent.scope_relation == ScopeRelation.CORRECTION,
+        )
         logger.info(
             "[%s] diagram.replace (fallback) type=%s nodes=%d",
             state.session_id,
@@ -226,30 +264,26 @@ class SessionPipeline:
                 effective_type,
                 state.diagram if state.diagram.nodes else None,
             )
-        return self.diagram_generator.generate_document(
-            IntentResult(
-                diagram_type=effective_type,
-                confidence=1.0,
-                action=IntentAction.REPLACE,
-                reason="rules_fallback",
-            ),
-            state.raw_transcript,
+        return self.diagram_generator.generate_document_from_utterances(
+            effective_type,
+            state.committed_utterances,
+            current=state.diagram if state.diagram.nodes else None,
         )
 
     def _build_patch(
         self,
         ai_response: Optional[AIResponse],
-        intent: IntentResult,
         effective_type: DiagramType,
-        unread_text: str,
         state: SessionState,
-    ) -> Optional:
+    ) -> Optional[DiagramPatch]:
         if ai_response and ai_response.facts.nodes:
             return self.diagram_generator.generate_patch_from_facts(
                 ai_response.facts, effective_type, state.diagram
             )
-        return self.diagram_generator.generate_patch(
-            intent, unread_text, state.diagram
+        return self.diagram_generator.generate_patch_from_utterances(
+            effective_type,
+            state.committed_utterances,
+            state.diagram,
         )
 
     def _merge_ai_result(
@@ -308,6 +342,42 @@ class SessionPipeline:
         self.transcript_buffer.mark_generated(state)
         self.trigger_engine.arm_cooldown(state)
 
+    def _record_trigger(self, state: SessionState, reason: Optional[str]) -> None:
+        key = reason or "unknown"
+        counts = state.telemetry.trigger_counts
+        counts[key] = counts.get(key, 0) + 1
+
+    def _record_generation(
+        self,
+        state: SessionState,
+        trigger_reason: Optional[str],
+        event_type: str,
+        used_ai_facts: bool,
+        is_correction: bool,
+    ) -> None:
+        if not used_ai_facts:
+            state.telemetry.fallback_generations += 1
+        if event_type == "replace":
+            state.telemetry.diagram_replaces += 1
+            if is_correction:
+                state.telemetry.correction_replaces += 1
+        elif event_type == "patch":
+            state.telemetry.diagram_patches += 1
+
+        logger.info(
+            "[%s] telemetry trigger=%s finals=%d dropped_partials=%d model=%d/%d fallback=%d replace=%d patch=%d correction_replace=%d",
+            state.session_id,
+            trigger_reason or "unknown",
+            state.telemetry.committed_finals,
+            state.telemetry.dropped_partials,
+            state.telemetry.model_successes,
+            state.telemetry.model_calls,
+            state.telemetry.fallback_generations,
+            state.telemetry.diagram_replaces,
+            state.telemetry.diagram_patches,
+            state.telemetry.correction_replaces,
+        )
+
     # ------------------------------------------------------------------
     # Command handling
     # ------------------------------------------------------------------
@@ -343,10 +413,14 @@ class SessionPipeline:
             state.switch_streak = 0
             state.last_request_id = 0
             state.last_applied_version = 0
-            state.raw_transcript = ""
+            state.committed_transcript = ""
+            state.preview_transcript = ""
+            state.committed_utterances = []
             state.last_generated_offset = 0
             state.last_processed_offset = 0
+            state.last_chunk_at = 0.0
             state.last_generation_at = 0.0
+            state.cooldown_until = 0.0
             outbound.append(DiagramReplaceEvent(diagram=state.diagram))
             outbound.append(
                 StatusEvent(

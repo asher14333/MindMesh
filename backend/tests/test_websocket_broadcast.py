@@ -75,3 +75,70 @@ def test_session_broadcasts_diagram_events_to_other_clients() -> None:
                 "intent.result",
                 "diagram.patch",
             ]
+
+
+def test_late_joiner_receives_current_diagram_before_future_patches() -> None:
+    with TestClient(app) as client:
+        client.app.state.pipeline.model_orchestrator._client = None
+        client.app.state.pipeline.settings.generation_cooldown_seconds = 0.0
+        client.app.state.pipeline.trigger_engine.settings.generation_cooldown_seconds = 0.0
+
+        with client.websocket_connect("/ws/demo-room") as sender:
+            initial = sender.receive_json()
+            assert initial["type"] == "status"
+            assert initial["diagram_type"] == "none"
+
+            sender.send_json(
+                {
+                    "type": "ui.command",
+                    "command": "visualize.toggle",
+                    "payload": {"enabled": True},
+                }
+            )
+            toggled = sender.receive_json()
+            assert toggled["type"] == "status"
+            assert toggled["message"] == "visualize_enabled"
+
+            sender.send_json(
+                {
+                    "type": "speech.final",
+                    "text": "First sales hands off the deal to solutions engineering.",
+                    "speaker": "spk-a",
+                }
+            )
+
+            replace_events = [sender.receive_json() for _ in range(3)]
+            assert [event["type"] for event in replace_events] == [
+                "transcript.update",
+                "intent.result",
+                "diagram.replace",
+            ]
+
+            with client.websocket_connect("/ws/demo-room") as late_joiner:
+                hydrated_status = late_joiner.receive_json()
+                hydrated_replace = late_joiner.receive_json()
+
+                assert hydrated_status["type"] == "status"
+                assert hydrated_status["diagram_type"] == "flowchart"
+                assert hydrated_replace["type"] == "diagram.replace"
+                assert hydrated_replace["diagram"]["version"] == 1
+                assert len(hydrated_replace["diagram"]["nodes"]) == 1
+
+                sender.send_json(
+                    {
+                        "type": "speech.final",
+                        "text": "Then security reviews the integration requirements.",
+                        "speaker": "spk-a",
+                    }
+                )
+
+                assert _receive_types(sender, 3) == [
+                    "transcript.update",
+                    "intent.result",
+                    "diagram.patch",
+                ]
+                assert _receive_types(late_joiner, 3) == [
+                    "transcript.update",
+                    "intent.result",
+                    "diagram.patch",
+                ]

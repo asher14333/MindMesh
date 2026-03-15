@@ -11,12 +11,26 @@ class SessionMode(str, Enum):
     VISUALIZING = "visualizing"
 
 
+class SessionTelemetry(BaseModel):
+    dropped_partials: int = 0
+    committed_finals: int = 0
+    model_calls: int = 0
+    model_successes: int = 0
+    fallback_generations: int = 0
+    diagram_replaces: int = 0
+    diagram_patches: int = 0
+    correction_replaces: int = 0
+    trigger_counts: dict[str, int] = Field(default_factory=dict)
+
+
 class SessionState(BaseModel):
     session_id: str
     meeting_title: str = "Untitled Meeting"
     mode: SessionMode = SessionMode.STANDBY
     diagram_type: DiagramType = DiagramType.NONE
-    raw_transcript: str = ""
+    committed_transcript: str = ""
+    preview_transcript: str = ""
+    committed_utterances: list[str] = Field(default_factory=list)
     last_generated_offset: int = 0
     last_chunk_at: float = 0.0
     last_generation_at: float = 0.0
@@ -32,3 +46,4 @@ class SessionState(BaseModel):
     switch_streak: int = 0
     last_request_id: int = 0
     last_applied_version: int = 0
+    telemetry: SessionTelemetry = Field(default_factory=SessionTelemetry)

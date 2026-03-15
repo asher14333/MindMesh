@@ -137,6 +137,67 @@ def test_generate_patch_returns_none_for_replace_request() -> None:
     assert patch is None
 
 
+def test_generate_patch_from_utterances_uses_stable_semantic_ids() -> None:
+    generator = DiagramGenerator()
+    current = generator.generate_document_from_utterances(
+        DiagramType.FLOWCHART,
+        ["First sales hands off the deal to solutions engineering."],
+    )
+
+    patch = generator.generate_patch_from_utterances(
+        DiagramType.FLOWCHART,
+        [
+            "First sales hands off the deal to solutions engineering.",
+            "Then security reviews the integration requirements.",
+        ],
+        current,
+    )
+
+    assert patch is not None
+    assert [op.op for op in patch.ops] == ["add_node", "add_edge"]
+    assert patch.ops[0].data["id"] == "n-security-reviews-the-integration-requirements"
+
+
+def test_generate_document_from_utterances_replaces_last_step_on_correction() -> None:
+    generator = DiagramGenerator()
+
+    diagram = generator.generate_document_from_utterances(
+        DiagramType.FLOWCHART,
+        [
+            "First sales hands off the deal to solutions engineering.",
+            "Actually legal approves the MSA first.",
+        ],
+    )
+
+    assert [node.data.label for node in diagram.nodes] == ["Legal approves the MSA first"]
+
+
+def test_generate_document_from_utterances_builds_orgchart_relationship() -> None:
+    generator = DiagramGenerator()
+
+    diagram = generator.generate_document_from_utterances(
+        DiagramType.ORGCHART,
+        ["Alice reports to Bob in the organization chart."],
+    )
+
+    assert [node.data.label for node in diagram.nodes] == ["Alice", "Bob"]
+    assert [(edge.source, edge.target, edge.data.kind) for edge in diagram.edges] == [
+        ("n-alice", "n-bob", "reports_to")
+    ]
+
+
+def test_generate_document_from_utterances_extracts_timeline_time_label() -> None:
+    generator = DiagramGenerator()
+
+    diagram = generator.generate_document_from_utterances(
+        DiagramType.TIMELINE,
+        ["Q1 kickoff happens in January."],
+    )
+
+    assert diagram.nodes[0].data.label == "Q1 kickoff happens in January"
+    assert diagram.nodes[0].data.time_label == "Q1"
+
+
 def test_render_adapter_apply_patch_assigns_position_and_removes_incident_edges() -> None:
     adapter = RenderAdapter()
     current = DiagramDocument(
