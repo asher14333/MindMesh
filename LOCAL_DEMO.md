@@ -26,7 +26,7 @@ uvicorn app.main:app --reload
 ```
 
 2. Start the frontend:
-
+#
 ```bash
 cd client
 npm run dev
