@@ -52,7 +52,7 @@ export default function LandingPage() {
                 </span>
               </div>
 
-              <svg viewBox="0 0 520 380" fill="none" xmlns="http://www.w3.org/2000/svg" className={styles.diagram}>
+              <svg viewBox="0 0 580 420" fill="none" xmlns="http://www.w3.org/2000/svg" className={styles.diagram}>
                 <defs>
                   <filter id="nodeShadow" x="-6%" y="-6%" width="112%" height="124%">
                     <feDropShadow dx="0" dy="2" stdDeviation="4" floodOpacity="0.10" />
@@ -66,102 +66,95 @@ export default function LandingPage() {
                 <pattern id="dotGrid" width="20" height="20" patternUnits="userSpaceOnUse">
                   <circle cx="10" cy="10" r="0.7" fill="#ddd" />
                 </pattern>
-                <rect width="520" height="380" fill="url(#dotGrid)" />
+                <rect width="580" height="420" fill="url(#dotGrid)" />
 
-                {/* ── edges (smooth bezier curves) ── */}
-                {/* root → Deal Review */}
-                <path d="M200 62 C200 90, 100 90, 100 118" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
-                {/* root → SE Intro */}
-                <path d="M260 62 C260 82, 260 82, 260 118" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
-                {/* root → Security */}
-                <path d="M300 62 C300 90, 420 90, 420 118" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
+                {/* ── edges ── */}
+                {/* Root → Deal Review */}
+                <path d="M260 62 C260 93, 110 93, 110 124" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
+                {/* Root → SE Intro */}
+                <path d="M290 62 C290 93, 290 93, 290 124" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
+                {/* Root → Security */}
+                <path d="M320 62 C320 93, 475 93, 475 124" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
                 {/* Deal Review → Pricing */}
-                <path d="M100 158 C100 180, 100 180, 100 212" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
+                <path d="M110 164 C110 204, 80 204, 80 248" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
                 {/* SE Intro → Legal */}
-                <path d="M240 158 C240 180, 190 180, 190 212" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
+                <path d="M272 164 C272 204, 222 204, 222 248" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
                 {/* SE Intro → Integration */}
-                <path d="M280 158 C280 180, 330 180, 330 212" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
+                <path d="M308 164 C308 204, 370 204, 370 248" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
                 {/* Security → Sign-off */}
-                <path d="M420 158 C420 180, 420 180, 420 212" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
+                <path d="M475 164 C475 204, 510 204, 510 248" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
                 {/* Legal → Provisioning */}
-                <path d="M190 252 C190 274, 190 274, 190 304" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
+                <path d="M222 288 C222 322, 222 322, 222 356" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
                 {/* Integration → CS Notified */}
-                <path d="M330 252 C330 274, 340 274, 340 304" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
+                <path d="M370 288 C370 322, 370 322, 370 356" stroke="#888" strokeWidth="1.6" fill="none" markerEnd="url(#arrowhead)" />
 
                 {/* ── nodes ── */}
 
                 {/* Root: Sales Handoff */}
                 <g filter="url(#nodeShadow)">
-                  <rect x="185" y="24" width="150" height="38" rx="10" fill="#111" />
-                  <text x="260" y="49" textAnchor="middle" fill="#fff" fontSize="12" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">Sales Handoff</text>
+                  <rect x="215" y="24" width="150" height="38" rx="10" fill="#111" />
+                  <text x="290" y="49" textAnchor="middle" fill="#fff" fontSize="12" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">Sales Handoff</text>
                 </g>
 
                 {/* L1: Deal Review */}
                 <g filter="url(#nodeShadow)">
-                  <rect x="42" y="118" width="116" height="40" rx="10" fill="#f5f3ff" stroke="#c4b5fd" strokeWidth="1.4" />
-                  <circle cx="60" cy="138" r="4" fill="#818cf8" />
-                  <text x="72" y="143" fill="#1e1b4b" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">Deal Review</text>
+                  <rect x="50" y="124" width="120" height="40" rx="10" fill="#f5f3ff" stroke="#c4b5fd" strokeWidth="1.4" />
+                  <circle cx="68" cy="144" r="4" fill="#818cf8" />
+                  <text x="80" y="149" fill="#1e1b4b" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">Deal Review</text>
                 </g>
 
                 {/* L1: SE Intro */}
                 <g filter="url(#nodeShadow)">
-                  <rect x="202" y="118" width="116" height="40" rx="10" fill="#fffbeb" stroke="#fcd34d" strokeWidth="1.4" />
-                  <circle cx="220" cy="138" r="4" fill="#f59e0b" />
-                  <text x="232" y="143" fill="#78350f" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">SE Intro</text>
+                  <rect x="230" y="124" width="120" height="40" rx="10" fill="#fffbeb" stroke="#fcd34d" strokeWidth="1.4" />
+                  <circle cx="248" cy="144" r="4" fill="#f59e0b" />
+                  <text x="260" y="149" fill="#78350f" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">SE Intro</text>
                 </g>
 
                 {/* L1: Security Review */}
                 <g filter="url(#nodeShadow)">
-                  <rect x="362" y="118" width="116" height="40" rx="10" fill="#fef2f2" stroke="#fca5a5" strokeWidth="1.4" />
-                  <circle cx="380" cy="138" r="4" fill="#ef4444" />
-                  <text x="392" y="143" fill="#7f1d1d" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">Security Review</text>
+                  <rect x="410" y="124" width="130" height="40" rx="10" fill="#fef2f2" stroke="#fca5a5" strokeWidth="1.4" />
+                  <circle cx="428" cy="144" r="4" fill="#ef4444" />
+                  <text x="440" y="149" fill="#7f1d1d" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">Security Review</text>
                 </g>
 
                 {/* L2: Pricing Align */}
                 <g filter="url(#nodeShadow)">
-                  <rect x="42" y="212" width="116" height="40" rx="10" fill="#f5f3ff" stroke="#c4b5fd" strokeWidth="1.4" />
-                  <circle cx="60" cy="232" r="4" fill="#818cf8" />
-                  <text x="72" y="237" fill="#1e1b4b" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">Pricing Align</text>
+                  <rect x="18" y="248" width="122" height="40" rx="10" fill="#f5f3ff" stroke="#c4b5fd" strokeWidth="1.4" />
+                  <circle cx="36" cy="268" r="4" fill="#818cf8" />
+                  <text x="48" y="273" fill="#1e1b4b" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">Pricing Align</text>
                 </g>
 
                 {/* L2: Legal MSA */}
                 <g filter="url(#nodeShadow)">
-                  <rect x="132" y="212" width="116" height="40" rx="10" fill="#ecfdf5" stroke="#6ee7b7" strokeWidth="1.4" />
-                  <circle cx="150" cy="232" r="4" fill="#10b981" />
-                  <text x="162" y="237" fill="#064e3b" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">Legal MSA</text>
+                  <rect x="162" y="248" width="120" height="40" rx="10" fill="#ecfdf5" stroke="#6ee7b7" strokeWidth="1.4" />
+                  <circle cx="180" cy="268" r="4" fill="#10b981" />
+                  <text x="192" y="273" fill="#064e3b" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">Legal MSA</text>
                 </g>
 
                 {/* L2: Integration */}
                 <g filter="url(#nodeShadow)">
-                  <rect x="272" y="212" width="116" height="40" rx="10" fill="#fffbeb" stroke="#fcd34d" strokeWidth="1.4" />
-                  <circle cx="290" cy="232" r="4" fill="#f59e0b" />
-                  <text x="302" y="237" fill="#78350f" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">Integration</text>
+                  <rect x="310" y="248" width="120" height="40" rx="10" fill="#fffbeb" stroke="#fcd34d" strokeWidth="1.4" />
+                  <circle cx="328" cy="268" r="4" fill="#f59e0b" />
+                  <text x="340" y="273" fill="#78350f" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">Integration</text>
                 </g>
 
                 {/* L2: Sign-off */}
                 <g filter="url(#nodeShadow)">
-                  <rect x="362" y="212" width="116" height="40" rx="10" fill="#fef2f2" stroke="#fca5a5" strokeWidth="1.4" />
-                  <circle cx="380" cy="232" r="4" fill="#ef4444" />
-                  <text x="392" y="237" fill="#7f1d1d" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">Sign-off</text>
+                  <rect x="450" y="248" width="116" height="40" rx="10" fill="#fef2f2" stroke="#fca5a5" strokeWidth="1.4" />
+                  <circle cx="468" cy="268" r="4" fill="#ef4444" />
+                  <text x="480" y="273" fill="#7f1d1d" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">Sign-off</text>
                 </g>
 
                 {/* L3: Provisioning */}
                 <g filter="url(#nodeShadow)">
-                  <rect x="132" y="304" width="116" height="40" rx="10" fill="#f9fafb" stroke="#d1d5db" strokeWidth="1.4" strokeDasharray="4 3" />
-                  <text x="190" y="330" textAnchor="middle" fill="#555" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">Provisioning</text>
+                  <rect x="162" y="356" width="120" height="40" rx="10" fill="#f9fafb" stroke="#d1d5db" strokeWidth="1.4" strokeDasharray="4 3" />
+                  <text x="222" y="382" textAnchor="middle" fill="#555" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">Provisioning</text>
                 </g>
 
                 {/* L3: CS Notified */}
                 <g filter="url(#nodeShadow)">
-                  <rect x="282" y="304" width="116" height="40" rx="10" fill="#f9fafb" stroke="#d1d5db" strokeWidth="1.4" strokeDasharray="4 3" />
-                  <text x="340" y="330" textAnchor="middle" fill="#555" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">CS Notified</text>
-                </g>
-
-                {/* live cursor indicator */}
-                <g>
-                  <rect x="212" y="46" width="6" height="12" rx="1" fill="#22c55e">
-                    <animate attributeName="opacity" values="1;0;1" dur="1.2s" repeatCount="indefinite" />
-                  </rect>
+                  <rect x="310" y="356" width="120" height="40" rx="10" fill="#f9fafb" stroke="#d1d5db" strokeWidth="1.4" strokeDasharray="4 3" />
+                  <text x="370" y="382" textAnchor="middle" fill="#555" fontSize="11" fontWeight="600" fontFamily="-apple-system, system-ui, sans-serif">CS Notified</text>
                 </g>
               </svg>
             </div>
