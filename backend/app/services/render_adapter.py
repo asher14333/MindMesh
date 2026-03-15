@@ -9,6 +9,11 @@ from app.schemas.diagram import (
 
 
 class RenderAdapter:
+    FLOWCHART_START_X = 120
+    FLOWCHART_NODE_WIDTH = 240
+    FLOWCHART_GAP = 40
+    FLOWCHART_Y = 200
+
     def layout_document(self, diagram: DiagramDocument) -> DiagramDocument:
         total = len(diagram.nodes)
         positioned = [
@@ -144,4 +149,9 @@ class RenderAdapter:
                 y=220 + (offset // cols) * 160,
             )
 
-        return Position(x=120 + index * 240, y=200)
+        return Position(
+            x=RenderAdapter.FLOWCHART_START_X
+            + index
+            * (RenderAdapter.FLOWCHART_NODE_WIDTH + RenderAdapter.FLOWCHART_GAP),
+            y=RenderAdapter.FLOWCHART_Y,
+        )

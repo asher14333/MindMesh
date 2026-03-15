@@ -198,6 +198,35 @@ def test_generate_document_from_utterances_extracts_timeline_time_label() -> Non
     assert diagram.nodes[0].data.time_label == "Q1"
 
 
+def test_accept_flowchart_delta_skips_meta_chatter() -> None:
+    generator = DiagramGenerator()
+
+    accepted = generator.accept_flowchart_delta(
+        ["Sales hands off the deal to solutions engineering"],
+        "Okay that kind of works. What's going to happen next is I'll send the recap.",
+    )
+
+    assert accepted == ["Sales hands off the deal to solutions engineering"]
+
+
+def test_render_adapter_layout_document_uses_positive_flowchart_gap() -> None:
+    adapter = RenderAdapter()
+    diagram = DiagramDocument(
+        diagram_type=DiagramType.FLOWCHART,
+        nodes=[
+            _node("n-a", "A"),
+            _node("n-b", "B"),
+            _node("n-c", "C"),
+            _node("n-d", "D"),
+        ],
+    )
+
+    positioned = adapter.layout_document(diagram)
+
+    assert [node.position.x for node in positioned.nodes] == [120, 400, 680, 960]
+    assert all(node.position.y == 200 for node in positioned.nodes)
+
+
 def test_render_adapter_apply_patch_assigns_position_and_removes_incident_edges() -> None:
     adapter = RenderAdapter()
     current = DiagramDocument(

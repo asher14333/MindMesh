@@ -50,6 +50,7 @@ export type MindMeshState = {
   lastTranscript: TranscriptUpdateEvent | null
   lastError: ErrorEvent | null
   lastReplaceVersion: number | null
+  lastAddNodePatchVersion: number | null
   recentEvents: RecentEventSummary[]
 }
 
@@ -170,6 +171,7 @@ function applyReplace(state: MindMeshState, diagram: DiagramDocument): MindMeshS
     nodesById,
     edgesById,
     lastReplaceVersion: diagram.version,
+    lastAddNodePatchVersion: null,
   }
 }
 
@@ -271,6 +273,9 @@ function applyPatch(state: MindMeshState, patch: DiagramPatch): MindMeshState {
     version: patch.version,
     nodesById,
     edgesById,
+    lastAddNodePatchVersion: patch.ops.some((op) => op.op === "add_node")
+      ? patch.version
+      : state.lastAddNodePatchVersion,
   }
 }
 
@@ -288,6 +293,7 @@ const initialState: MindMeshState = {
   lastTranscript: null,
   lastError: null,
   lastReplaceVersion: null,
+  lastAddNodePatchVersion: null,
   recentEvents: [],
 }
 

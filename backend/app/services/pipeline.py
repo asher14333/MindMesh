@@ -138,7 +138,7 @@ class SessionPipeline:
                 delta=delta,
                 diagram_type=state.locked_diagram_type or intent.diagram_type,
                 graph_summary=self._build_graph_summary(state),
-                scope_summary=state.scope_summary,
+                scope_summary=self._scope_summary_for_prompt(state),
                 request_id=state.last_request_id,
             )
             if ai_response and ai_response.request_id == state.last_request_id:
@@ -155,6 +155,19 @@ class SessionPipeline:
             return outbound
 
         self.intent_classifier.update_scope_lock(state, intent)
+
+        # STEP 4 — deterministic graph planning
+        effective_type = state.locked_diagram_type or intent.diagram_type
+        if effective_type == DiagramType.NONE:
+            effective_type = DiagramType.FLOWCHART
+
+        use_ai_facts = self._should_use_ai_facts(ai_response)
+        if effective_type == DiagramType.FLOWCHART and not use_ai_facts:
+            self._apply_flowchart_acceptance(state, delta)
+            if not state.accepted_utterances:
+                self._consume_ignored_delta(state)
+                return outbound
+
         outbound.append(IntentResultEvent(result=intent))
         logger.info("[%s] intent=%s confidence=%.2f", state.session_id, intent.diagram_type, intent.confidence)
 
@@ -162,17 +175,11 @@ class SessionPipeline:
             self._consume_ignored_delta(state)
             return outbound
 
-        # STEP 4 — deterministic graph planning
-        effective_type = state.locked_diagram_type or intent.diagram_type
-        if effective_type == DiagramType.NONE:
-            effective_type = DiagramType.FLOWCHART
-
         needs_replace = (
             not state.diagram.nodes
             or state.diagram.diagram_type != effective_type
             or intent.action == IntentAction.REPLACE
         )
-        use_ai_facts = self._should_use_ai_facts(state, ai_response, effective_type)
         used_ai_facts = use_ai_facts
 
         if needs_replace:
@@ -226,11 +233,7 @@ class SessionPipeline:
             updated_diagram, emitted_patch = self.render_adapter.apply_patch_with_emitted(
                 state.diagram, patch
             )
-            state.diagram = updated_diagram
-            state.diagram_type = effective_type
-            state.last_applied_version = state.diagram.version
-            self.transcript_buffer.mark_generated(state)
-            self.trigger_engine.arm_cooldown(state)
+            self._commit_diagram(state, updated_diagram, effective_type)
             self._record_generation(
                 state=state,
                 trigger_reason=decision.reason,
@@ -245,6 +248,9 @@ class SessionPipeline:
         diagram = self._build_full(
             ai_response, effective_type, state, use_ai_facts=use_ai_facts
         )
+        if self._diagrams_equivalent(state.diagram, diagram):
+            self._consume_ignored_delta(state)
+            return outbound
         diagram = self.render_adapter.layout_document(diagram)
         self._commit_diagram(state, diagram, effective_type)
         self._record_generation(
@@ -283,7 +289,7 @@ class SessionPipeline:
             )
         return self.diagram_generator.generate_document_from_utterances(
             effective_type,
-            state.committed_utterances,
+            self._source_utterances(state, effective_type),
             current=state.diagram if state.diagram.nodes else None,
         )
 
@@ -301,27 +307,14 @@ class SessionPipeline:
             )
         return self.diagram_generator.generate_patch_from_utterances(
             effective_type,
-            state.committed_utterances,
+            self._source_utterances(state, effective_type),
             state.diagram,
         )
 
     def _should_use_ai_facts(
-        self,
-        state: SessionState,
-        ai_response: Optional[AIResponse],
-        effective_type: DiagramType,
+        self, ai_response: Optional[AIResponse]
     ) -> bool:
-        if not ai_response or not ai_response.facts.nodes:
-            return False
-        if effective_type == DiagramType.FLOWCHART:
-            logger.info(
-                "[%s] flowchart planning uses committed utterances; ignoring AI facts nodes=%d edges=%d",
-                state.session_id,
-                len(ai_response.facts.nodes),
-                len(ai_response.facts.edges),
-            )
-            return False
-        return True
+        return bool(ai_response and ai_response.facts.nodes)
 
     def _merge_ai_result(
         self, rules_intent: IntentResult, ai: AIResponse
@@ -376,6 +369,8 @@ class SessionPipeline:
         state.diagram = diagram
         state.diagram_type = effective_type
         state.last_applied_version = diagram.version
+        self._sync_accepted_utterances(state)
+        self._refresh_scope_summary(state)
         self.transcript_buffer.mark_generated(state)
         self.trigger_engine.arm_cooldown(state)
 
@@ -457,6 +452,7 @@ class SessionPipeline:
             state.committed_transcript = ""
             state.preview_transcript = ""
             state.committed_utterances = []
+            state.accepted_utterances = []
             state.last_generated_offset = 0
             state.last_processed_offset = 0
             state.last_chunk_at = 0.0
@@ -493,3 +489,91 @@ class SessionPipeline:
             )
 
         return outbound
+
+    def _source_utterances(
+        self, state: SessionState, effective_type: DiagramType
+    ) -> list[str]:
+        if effective_type == DiagramType.FLOWCHART:
+            return state.accepted_utterances
+        return state.committed_utterances
+
+    def _apply_flowchart_acceptance(
+        self, state: SessionState, transcript_delta: str
+    ) -> None:
+        state.accepted_utterances = self.diagram_generator.accept_flowchart_delta(
+            state.accepted_utterances,
+            transcript_delta,
+        )
+
+    def _sync_accepted_utterances(self, state: SessionState) -> None:
+        if state.diagram.diagram_type != DiagramType.FLOWCHART:
+            state.accepted_utterances = []
+            return
+        ordered_nodes = sorted(
+            state.diagram.nodes,
+            key=lambda node: (node.position.y, node.position.x, node.id),
+        )
+        state.accepted_utterances = [
+            node.data.label for node in ordered_nodes if node.data.label
+        ]
+
+    def _refresh_scope_summary(self, state: SessionState) -> None:
+        if state.diagram.nodes:
+            ordered_nodes = sorted(
+                state.diagram.nodes,
+                key=lambda node: (node.position.y, node.position.x, node.id),
+            )
+            labels = [node.data.label for node in ordered_nodes[:4] if node.data.label]
+            state.scope_summary = " -> ".join(labels)
+            return
+        if state.accepted_utterances:
+            state.scope_summary = " -> ".join(state.accepted_utterances[:4])
+            return
+        state.scope_summary = ""
+
+    def _scope_summary_for_prompt(self, state: SessionState) -> str:
+        return state.scope_summary or state.meeting_title
+
+    def _diagrams_equivalent(
+        self, current: DiagramDocument, candidate: DiagramDocument
+    ) -> bool:
+        if current.diagram_type != candidate.diagram_type:
+            return False
+        current_nodes = [
+            (
+                node.id,
+                node.data.label,
+                node.data.kind,
+                node.data.status,
+                node.data.description,
+                node.data.lane,
+                node.data.actor,
+                node.data.time_label,
+            )
+            for node in current.nodes
+        ]
+        candidate_nodes = [
+            (
+                node.id,
+                node.data.label,
+                node.data.kind,
+                node.data.status,
+                node.data.description,
+                node.data.lane,
+                node.data.actor,
+                node.data.time_label,
+            )
+            for node in candidate.nodes
+        ]
+        if current_nodes != candidate_nodes:
+            return False
+
+        current_edges = [
+            (edge.id, edge.source, edge.target, edge.label, edge.data.kind)
+            for edge in current.edges
+        ]
+        candidate_edges = [
+            (edge.id, edge.source, edge.target, edge.label, edge.data.kind)
+            for edge in candidate.edges
+        ]
+        return current_edges == candidate_edges

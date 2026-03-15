@@ -147,6 +147,7 @@
 }
 
 .react-flow__node.mindmesh-node {
+  box-sizing: border-box;
   border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
   background: linear-gradient(
@@ -160,7 +161,7 @@
   color: var(--foreground);
   font-weight: 500;
   padding: 14px 16px;
-  min-width: 240px;
+  width: 240px;
 }
 
 .react-flow__node.mindmesh-node.selected {

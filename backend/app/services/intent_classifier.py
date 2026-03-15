@@ -56,6 +56,14 @@ class IntentClassifier:
         r"^(um+|uh+|ah+|er+|hmm+|like|you know|so|okay|ok|right|"
         r"yeah|yes|no|mhm)[\s.,!?]*$",
     ]
+    META_PATTERNS = [
+        r"^(okay|ok|alright|right|so)\b.*\b(that kind of works|that works|got it|makes sense)\b",
+        r"^(what('?s| is) going to happen next|what happens next)\b",
+        r"^(can|could|would|should)\b",
+        r"^(let('?s| us))\b",
+        r"^(i('?m| am)|we('?re| are)) going to\b",
+        r"\bcan someone\b",
+    ]
     CONNECTOR_ONLY_TERMS = {
         "first",
         "then",
@@ -85,6 +93,19 @@ class IntentClassifier:
                 confidence=0.0,
                 action=IntentAction.NOOP,
                 reason="empty_or_filler",
+                scope_relation=ScopeRelation.OUT_OF_SCOPE,
+            )
+
+        if self._is_meta_or_question(normalized):
+            return IntentResult(
+                diagram_type=(
+                    state.locked_diagram_type
+                    if state and state.locked_diagram_type
+                    else DiagramType.FLOWCHART
+                ),
+                confidence=0.35,
+                action=IntentAction.NOOP,
+                reason="meta_or_question",
                 scope_relation=ScopeRelation.OUT_OF_SCOPE,
             )
 
@@ -194,7 +215,6 @@ class IntentClassifier:
         ):
             if intent.confidence >= 0.85:
                 state.locked_diagram_type = intent.diagram_type
-                state.scope_summary = state.meeting_title
                 state.switch_streak = 0
             elif intent.confidence >= 0.65:
                 if state.switch_streak >= 1:
@@ -232,3 +252,11 @@ class IntentClassifier:
             return True
         normalized = re.sub(r"[\s.,!?;:]+", " ", text.lower()).strip()
         return normalized in self.CONNECTOR_ONLY_TERMS
+
+    def _is_meta_or_question(self, text: str) -> bool:
+        if text.endswith("?"):
+            return True
+        return any(
+            re.search(pattern, text, re.IGNORECASE)
+            for pattern in self.META_PATTERNS
+        )

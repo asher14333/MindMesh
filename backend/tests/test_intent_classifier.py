@@ -95,3 +95,21 @@ def test_connector_only_utterance_is_treated_as_filler() -> None:
     assert intent.scope_relation == ScopeRelation.OUT_OF_SCOPE
     assert intent.action == IntentAction.NOOP
     assert intent.reason == "empty_or_filler"
+
+
+def test_meta_flowchart_chatter_is_treated_as_out_of_scope() -> None:
+    classifier = IntentClassifier()
+    state = SessionState(
+        session_id="s-6",
+        locked_diagram_type=DiagramType.FLOWCHART,
+    )
+
+    intent = classifier.classify(
+        "Okay that kind of works. What's going to happen next is I'll send the recap.",
+        state,
+    )
+
+    assert intent.diagram_type == DiagramType.FLOWCHART
+    assert intent.scope_relation == ScopeRelation.OUT_OF_SCOPE
+    assert intent.action == IntentAction.NOOP
+    assert intent.reason == "meta_or_question"

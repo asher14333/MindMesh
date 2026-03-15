@@ -233,6 +233,25 @@ class DiagramGenerator:
             patch.reason = "rules_incremental"
         return patch
 
+    def accept_flowchart_delta(
+        self, current: list[str], transcript_delta: str
+    ) -> list[str]:
+        accepted = list(current)
+        for utterance in self._utterances_from_transcript(transcript_delta):
+            if not self._is_relevant_flow_utterance(utterance):
+                continue
+
+            label = self._clean_flow_label(utterance)
+            if self._is_correction(utterance):
+                if accepted:
+                    accepted[-1] = label
+                else:
+                    accepted.append(label)
+            elif label not in accepted:
+                accepted.append(label)
+
+        return accepted[: self.MAX_NODES]
+
     # ------------------------------------------------------------------
     # Fact → schema helpers
     # ------------------------------------------------------------------
@@ -477,6 +496,38 @@ class DiagramGenerator:
                 cleaned = parts[1].strip()
         cleaned = cleaned[:1].upper() + cleaned[1:] if cleaned else "Awaiting transcript"
         return self._truncate(cleaned)
+
+    def _is_relevant_flow_utterance(self, text: str) -> bool:
+        cleaned = " ".join(text.split()).strip()
+        if not cleaned:
+            return False
+
+        normalized = cleaned.lower().rstrip(".!?")
+        if normalized.endswith("?"):
+            return False
+        if re.search(
+            r"\b(can someone|that kind of works|that works|got it|makes sense)\b",
+            normalized,
+        ):
+            return False
+        if re.match(
+            r"^(what('?s| is) going to happen next|what happens next)\b",
+            normalized,
+        ):
+            return False
+        if re.match(r"^(can|could|would|should)\b", normalized):
+            return False
+        if re.match(r"^(let('?s| us))\b", normalized):
+            return False
+        if re.match(r"^(i('?m| am)|we('?re| are)) going to\b", normalized):
+            return False
+        if re.match(
+            r"^(okay|ok|alright|right|so)\b.*\b(i('?m| am) going to|we('?re| are) going to|that kind of works|that works)\b",
+            normalized,
+        ):
+            return False
+
+        return True
 
     def _org_relation_from_utterance(
         self, utterance: str

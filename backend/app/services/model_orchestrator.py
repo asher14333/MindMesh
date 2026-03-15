@@ -100,11 +100,17 @@ Rules:
 - Do NOT include positions, numeric IDs, or style tokens.
 - Use descriptive snake_case keys (e.g. "sales_handoff").
 - Same concept must always use the same key across calls.
+- Return the FULL canonical in-scope graph after applying the transcript delta.
+- Do NOT return delta-only nodes or edges.
 - flowchart: "step"/"decision" kinds, "sequence" edges.
 - timeline: "milestone" kind with "time_label", "sequence" edges.
 - mindmap: "root" center + "branch" children, "depends_on" edges.
 - orgchart: "person" kind with "actor", "reports_to" edges.
 - Off-topic transcript: action="noop", scope_relation="out_of_scope".
+- Meta-talk, acknowledgements, questions, requests, and planning chatter that \
+  do not describe real process steps are off-topic.
+- Examples of off-topic flowchart chatter: "okay that kind of works", \
+  "what's going to happen next", "can someone send that?".
 - Corrections ("actually", "no", "instead"): scope_relation="correction", \
 include corrected facts.
 - Prefer "update" for incremental additions.

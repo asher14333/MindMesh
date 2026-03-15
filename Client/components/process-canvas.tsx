@@ -6,6 +6,7 @@ import {
   BackgroundVariant,
   Controls,
   ReactFlow,
+  getNodesBounds,
   type ReactFlowInstance,
 } from "@xyflow/react"
 import { useMindMesh, type MindMeshState } from "@/lib/mindmesh/store"
@@ -66,12 +67,14 @@ function DevDebugPanel({
 
 export default function ProcessCanvas() {
   const { state, connectionState, debug } = useMindMesh()
+  const canvasRef = useRef<HTMLDivElement | null>(null)
 
   const nodes = useMemo(() => Object.values(state.nodesById), [state.nodesById])
   const edges = useMemo(() => Object.values(state.edgesById), [state.edgesById])
 
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
   const lastFitReplaceVersionRef = useRef<number | null>(null)
+  const lastExpandedPatchVersionRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!rfInstance) return
@@ -86,6 +89,38 @@ export default function ProcessCanvas() {
     lastFitReplaceVersionRef.current = state.lastReplaceVersion
   }, [rfInstance, nodes.length, state.lastReplaceVersion])
 
+  useEffect(() => {
+    if (!rfInstance) return
+    if (!canvasRef.current) return
+    if (state.lastAddNodePatchVersion === null) return
+    if (lastExpandedPatchVersionRef.current === state.lastAddNodePatchVersion) return
+    if (nodes.length === 0) return
+
+    requestAnimationFrame(() => {
+      const measuredNodes = rfInstance.getNodes()
+      if (measuredNodes.length === 0 || !canvasRef.current) return
+
+      const bounds = getNodesBounds(measuredNodes)
+      const viewport = rfInstance.getViewport()
+      const canvasWidth = canvasRef.current.clientWidth
+      const canvasHeight = canvasRef.current.clientHeight
+      const left = -viewport.x / viewport.zoom
+      const top = -viewport.y / viewport.zoom
+      const right = (-viewport.x + canvasWidth) / viewport.zoom
+      const bottom = (-viewport.y + canvasHeight) / viewport.zoom
+      const needsExpand =
+        bounds.x < left ||
+        bounds.y < top ||
+        bounds.x + bounds.width > right ||
+        bounds.y + bounds.height > bottom
+
+      if (needsExpand) {
+        rfInstance.fitBounds(bounds, { padding: 0.12, duration: 300 })
+      }
+      lastExpandedPatchVersionRef.current = state.lastAddNodePatchVersion
+    })
+  }, [rfInstance, nodes.length, state.lastAddNodePatchVersion])
+
   const hasDiagram = nodes.length > 0 || edges.length > 0
 
   const dotClass =
@@ -96,7 +131,7 @@ export default function ProcessCanvas() {
         : "bg-amber-500"
 
   return (
-    <div className="mindmesh-canvas relative h-full w-full">
+    <div ref={canvasRef} className="mindmesh-canvas relative h-full w-full">
       <ReactFlow
         nodes={nodes}
         edges={edges}
