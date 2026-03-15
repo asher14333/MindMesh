@@ -54,8 +54,7 @@ class RenderAdapter:
                 branch_children.setdefault(edge.source, []).append(edge.target)
                 branch_child_ids.add(edge.target)
 
-        # Identify top-level nodes (not a target of any branch edge)
-        top_nodes = [n for n in diagram.nodes if n.id not in branch_child_ids]
+        top_nodes = self._ordered_tree_top_nodes(diagram, branch_child_ids)
 
         positions: dict[str, Position] = {}
         x_cursor = self.FLOWCHART_START_X
@@ -68,11 +67,14 @@ class RenderAdapter:
                 children_span = n * NODE_W - self.FLOWCHART_GAP
                 # Centre parent over its children:
                 # parent_left_x = first_child_x + (children_span - node_width) / 2
-                center_x = x_cursor + max(0, (children_span - self.FLOWCHART_NODE_WIDTH) / 2)
+                center_x = x_cursor + max(
+                    0,
+                    (children_span - self.FLOWCHART_NODE_WIDTH) / 2,
+                )
                 positions[node.id] = Position(x=int(center_x), y=100)
                 for i, child_id in enumerate(children_ids):
                     positions[child_id] = Position(x=x_cursor + i * NODE_W, y=300)
-                x_cursor += children_span + NODE_W
+                x_cursor += children_span + self.FLOWCHART_GAP
             else:
                 positions[node.id] = Position(x=x_cursor, y=100)
                 x_cursor += NODE_W
@@ -93,6 +95,45 @@ class RenderAdapter:
                 "layout_version": diagram.layout_version + 1,
             }
         )
+
+    def _ordered_tree_top_nodes(
+        self, diagram: DiagramDocument, branch_child_ids: set[str]
+    ) -> list[DiagramNode]:
+        top_nodes = [node for node in diagram.nodes if node.id not in branch_child_ids]
+        if len(top_nodes) <= 1:
+            return top_nodes
+
+        node_map = {node.id: node for node in diagram.nodes}
+        sequence_targets = {
+            edge.target for edge in diagram.edges if edge.data.kind == "sequence"
+        }
+        sequence_next = {
+            edge.source: edge.target
+            for edge in diagram.edges
+            if edge.data.kind == "sequence"
+        }
+
+        ordered_ids: list[str] = []
+        visited: set[str] = set()
+        root_candidates = [
+            node.id for node in top_nodes if node.id not in sequence_targets
+        ]
+        for root_id in root_candidates:
+            current_id = root_id
+            while current_id in node_map and current_id not in visited:
+                if current_id in branch_child_ids:
+                    break
+                ordered_ids.append(current_id)
+                visited.add(current_id)
+                current_id = sequence_next.get(current_id, "")
+                if not current_id:
+                    break
+
+        for node in top_nodes:
+            if node.id not in visited:
+                ordered_ids.append(node.id)
+
+        return [node_map[node_id] for node_id in ordered_ids if node_id in node_map]
 
     def apply_patch(
         self, current: DiagramDocument, patch: DiagramPatch

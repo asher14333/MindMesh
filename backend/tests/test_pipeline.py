@@ -305,6 +305,154 @@ def test_pipeline_flowchart_ai_canonical_graph_appends_without_committed_noise()
     ]
 
 
+def test_pipeline_replaces_when_linear_flow_becomes_diagram_choice_branch() -> None:
+    pipeline = SessionPipeline(_settings())
+    state = SessionState(session_id="branching-flow", mode=SessionMode.VISUALIZING)
+
+    _speak_and_flush(
+        pipeline,
+        state,
+        "First we receive audio from the meeting.",
+    )
+    _speak_and_flush(
+        pipeline,
+        state,
+        "Then we infer the text via STT.",
+    )
+
+    events = _speak_and_flush(
+        pipeline,
+        state,
+        "Then we address intent and create 1 of 4 diagrams.",
+    )
+
+    assert [type(event) for event in events] == [
+        TranscriptUpdateEvent,
+        IntentResultEvent,
+        DiagramReplaceEvent,
+    ]
+    assert state.diagram.version == 3
+    assert [node.data.label for node in state.diagram.nodes] == [
+        "We receive audio from the meeting",
+        "We infer the text via STT",
+        "Address intent",
+        "Flowchart",
+        "Timeline",
+        "Mindmap",
+        "Orgchart",
+    ]
+    assert state.accepted_utterances == [
+        "We receive audio from the meeting",
+        "We infer the text via STT",
+        "We address intent and create 1 of 4 diagrams",
+    ]
+    assert state.scope_summary == (
+        "We receive audio from the meeting -> "
+        "We infer the text via STT -> "
+        "Address intent -> "
+        "{Flowchart | Timeline | Mindmap | Orgchart}"
+    )
+
+
+def test_pipeline_replaces_when_inline_or_creates_branch() -> None:
+    pipeline = SessionPipeline(_settings())
+    state = SessionState(session_id="inline-or-branch", mode=SessionMode.VISUALIZING)
+
+    _speak_and_flush(
+        pipeline,
+        state,
+        "So first off we start with the sales team passing it to the solutions engineering team.",
+    )
+
+    events = _speak_and_flush(
+        pipeline,
+        state,
+        "Then they pass it off to the product team or the engineering team.",
+    )
+
+    assert [type(event) for event in events] == [
+        TranscriptUpdateEvent,
+        IntentResultEvent,
+        DiagramReplaceEvent,
+    ]
+    assert [node.data.label for node in state.diagram.nodes] == [
+        "So first off we start with the sales team passing it to\u2026",
+        "They pass it off",
+        "Product team",
+        "Engineering team",
+    ]
+    assert [(edge.source, edge.target, edge.data.kind) for edge in state.diagram.edges] == [
+        (
+            "n-so-first-off-we-start-with-the-sales-team-passing-it-to",
+            "n-they-pass-it-off",
+            "sequence",
+        ),
+        ("n-they-pass-it-off", "n-product-team", "branch"),
+        ("n-they-pass-it-off", "n-engineering-team", "branch"),
+    ]
+    assert state.scope_summary == (
+        "So first off we start with the sales team passing it to\u2026 -> "
+        "They pass it off -> "
+        "{Product team | Engineering team}"
+    )
+
+
+def test_pipeline_replaces_when_branch_children_arrive_in_followup_utterance() -> None:
+    pipeline = SessionPipeline(_settings())
+    state = SessionState(session_id="branch-followup", mode=SessionMode.VISUALIZING)
+
+    _speak_and_flush(
+        pipeline,
+        state,
+        "Transform it into some sort of intent and then we map it out.",
+    )
+    _speak_and_flush(
+        pipeline,
+        state,
+        "And then we branch out into two categories.",
+    )
+
+    events = _speak_and_flush(
+        pipeline,
+        state,
+        "One being that it is relevant the other being that it's not relevant.",
+    )
+
+    assert [type(event) for event in events] == [
+        TranscriptUpdateEvent,
+        IntentResultEvent,
+        DiagramReplaceEvent,
+    ]
+    assert [node.data.label for node in state.diagram.nodes] == [
+        "Transform it into some sort of intent and then we map i\u2026",
+        "And then we branch out into two categories",
+        "Relevant",
+        "Not relevant",
+    ]
+    assert [(edge.source, edge.target, edge.data.kind) for edge in state.diagram.edges] == [
+        (
+            "n-transform-it-into-some-sort-of-intent-and-then-we-map-i",
+            "n-and-then-we-branch-out-into-two-categories",
+            "sequence",
+        ),
+        (
+            "n-and-then-we-branch-out-into-two-categories",
+            "n-relevant",
+            "branch",
+        ),
+        (
+            "n-and-then-we-branch-out-into-two-categories",
+            "n-not-relevant",
+            "branch",
+        ),
+    ]
+    assert state.scope_summary == (
+        "Transform it into some sort of intent and then we map i\u2026 -> "
+        "And then we branch out into two categories -> "
+        "{Relevant | Not relevant}"
+    )
+
+
 def test_pipeline_does_not_generate_or_broadcast_from_partials() -> None:
     pipeline = SessionPipeline(_settings())
     state = SessionState(session_id="partials", mode=SessionMode.VISUALIZING)

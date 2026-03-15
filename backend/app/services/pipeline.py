@@ -301,6 +301,33 @@ class SessionPipeline:
             outbound.append(DiagramReplaceEvent(diagram=diagram))
             return outbound
 
+        candidate_diagram = self._build_full(
+            resolved.ai_response,
+            effective_type,
+            state,
+            use_ai_facts=used_ai_facts,
+            source_utterances=resolved.source_utterances,
+        )
+        if self._branch_structure_changed(state.diagram, candidate_diagram):
+            diagram = self.render_adapter.layout_document(candidate_diagram)
+            self._commit_diagram(state, diagram, effective_type, request)
+            self._record_generation(
+                state=state,
+                trigger_reason=request.trigger_reason,
+                event_type="replace",
+                used_ai_facts=used_ai_facts,
+                is_correction=(
+                    resolved.intent.scope_relation == ScopeRelation.CORRECTION
+                ),
+            )
+            logger.info(
+                "[%s] diagram.replace reason=branch_structure_change nodes=%d",
+                state.session_id,
+                len(diagram.nodes),
+            )
+            outbound.append(DiagramReplaceEvent(diagram=diagram))
+            return outbound
+
         patch = self._build_patch(
             resolved.ai_response,
             effective_type,
@@ -316,13 +343,7 @@ class SessionPipeline:
                     patch.base_version,
                     state.diagram.version,
                 )
-                diagram = self._build_full(
-                    resolved.ai_response,
-                    effective_type,
-                    state,
-                    use_ai_facts=used_ai_facts,
-                    source_utterances=resolved.source_utterances,
-                )
+                diagram = candidate_diagram
                 diagram = self.render_adapter.layout_document(diagram)
                 self._commit_diagram(state, diagram, effective_type, request)
                 self._record_generation(
@@ -356,17 +377,11 @@ class SessionPipeline:
             outbound.append(DiagramPatchEvent(patch=emitted_patch))
             return outbound
 
-        diagram = self._build_full(
-            resolved.ai_response,
-            effective_type,
-            state,
-            use_ai_facts=used_ai_facts,
-            source_utterances=resolved.source_utterances,
-        )
-        if self._diagrams_equivalent(state.diagram, diagram):
+        if self._diagrams_equivalent(state.diagram, candidate_diagram):
             self._consume_ignored_delta(state, request)
             return outbound
 
+        diagram = candidate_diagram
         diagram = self.render_adapter.layout_document(diagram)
         self._commit_diagram(state, diagram, effective_type, request)
         self._record_generation(
@@ -552,7 +567,7 @@ class SessionPipeline:
         state.diagram = diagram
         state.diagram_type = effective_type
         state.last_applied_version = diagram.version
-        self._sync_accepted_utterances(state)
+        self._sync_accepted_utterances(state, request.utterances)
         self._refresh_scope_summary(state)
         self.transcript_buffer.mark_generated(
             state,
@@ -697,28 +712,20 @@ class SessionPipeline:
             return state.accepted_utterances
         return state.committed_utterances
 
-    def _sync_accepted_utterances(self, state: SessionState) -> None:
+    def _sync_accepted_utterances(
+        self, state: SessionState, utterances: Optional[list[str]] = None
+    ) -> None:
         if state.diagram.diagram_type != DiagramType.FLOWCHART:
             state.accepted_utterances = []
             return
-        ordered_nodes = sorted(
-            state.diagram.nodes,
-            key=lambda node: (node.position.y, node.position.x, node.id),
+        state.accepted_utterances = self.diagram_generator.accept_flowchart_utterances(
+            state.accepted_utterances,
+            utterances or [],
         )
-        state.accepted_utterances = [
-            node.data.label for node in ordered_nodes if node.data.label
-        ]
 
     def _refresh_scope_summary(self, state: SessionState) -> None:
         if state.diagram.nodes:
-            ordered_nodes = sorted(
-                state.diagram.nodes,
-                key=lambda node: (node.position.y, node.position.x, node.id),
-            )
-            labels = [
-                node.data.label for node in ordered_nodes[:4] if node.data.label
-            ]
-            state.scope_summary = " -> ".join(labels)
+            state.scope_summary = self._diagram_scope_summary(state.diagram)
             return
         if state.accepted_utterances:
             state.scope_summary = " -> ".join(state.accepted_utterances[:4])
@@ -771,3 +778,52 @@ class SessionPipeline:
             for edge in candidate.edges
         ]
         return current_edges == candidate_edges
+
+    def _branch_structure_changed(
+        self, current: DiagramDocument, candidate: DiagramDocument
+    ) -> bool:
+        return self._branch_signature(current) != self._branch_signature(candidate)
+
+    def _branch_signature(
+        self, diagram: DiagramDocument
+    ) -> tuple[tuple[str, str, Optional[str]], ...]:
+        branch_edges = [
+            (edge.source, edge.target, edge.label)
+            for edge in diagram.edges
+            if edge.data.kind == "branch"
+        ]
+        return tuple(sorted(branch_edges))
+
+    def _diagram_scope_summary(self, diagram: DiagramDocument) -> str:
+        if self._branch_signature(diagram):
+            branch_child_ids = {
+                edge.target for edge in diagram.edges if edge.data.kind == "branch"
+            }
+            ordered_nodes = sorted(
+                diagram.nodes,
+                key=lambda node: (node.position.y, node.position.x, node.id),
+            )
+            top_labels = [
+                node.data.label
+                for node in ordered_nodes
+                if node.id not in branch_child_ids and node.data.label
+            ]
+            branch_labels = [
+                node.data.label
+                for node in ordered_nodes
+                if node.id in branch_child_ids and node.data.label
+            ]
+            if top_labels and branch_labels:
+                return (
+                    f"{' -> '.join(top_labels)} -> "
+                    f"{{{' | '.join(branch_labels)}}}"
+                )
+            if branch_labels:
+                return f"{{{' | '.join(branch_labels)}}}"
+
+        ordered_nodes = sorted(
+            diagram.nodes,
+            key=lambda node: (node.position.y, node.position.x, node.id),
+        )
+        labels = [node.data.label for node in ordered_nodes[:4] if node.data.label]
+        return " -> ".join(labels)

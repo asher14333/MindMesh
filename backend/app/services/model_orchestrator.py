@@ -111,6 +111,12 @@ Branching rule:
 When a parent has multiple options or types, create one parent node and one \
 child node per option, connected by branch edges. Do not create a linear chain.
 
+Diagram-choice rule:
+When the transcript says a flow branches into diagram outcomes, keep the \
+linear prefix intact, use a single branch parent such as "Address intent" or \
+"Choose diagram type", and fan out to child nodes like Flowchart, Timeline, \
+Mindmap, and Orgchart.
+
 Off-topic / noop examples:
 - "okay that works"
 - "what's the condition?"

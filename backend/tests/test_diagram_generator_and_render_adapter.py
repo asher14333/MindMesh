@@ -198,6 +198,130 @@ def test_generate_document_from_utterances_extracts_timeline_time_label() -> Non
     assert diagram.nodes[0].data.time_label == "Q1"
 
 
+def test_generate_document_from_utterances_builds_diagram_choice_branch() -> None:
+    generator = DiagramGenerator()
+
+    diagram = generator.generate_document_from_utterances(
+        DiagramType.FLOWCHART,
+        [
+            "First we receive audio from the meeting.",
+            "Then we infer the text via STT.",
+            "Then we address intent and create 1 of 4 diagrams.",
+        ],
+    )
+
+    assert [node.data.label for node in diagram.nodes] == [
+        "We receive audio from the meeting",
+        "We infer the text via STT",
+        "Address intent",
+        "Flowchart",
+        "Timeline",
+        "Mindmap",
+        "Orgchart",
+    ]
+    assert [(edge.source, edge.target, edge.data.kind) for edge in diagram.edges] == [
+        (
+            "n-we-receive-audio-from-the-meeting",
+            "n-we-infer-the-text-via-stt",
+            "sequence",
+        ),
+        (
+            "n-we-infer-the-text-via-stt",
+            "n-address-intent",
+            "sequence",
+        ),
+        ("n-address-intent", "n-flowchart", "branch"),
+        ("n-address-intent", "n-timeline", "branch"),
+        ("n-address-intent", "n-mindmap", "branch"),
+        ("n-address-intent", "n-orgchart", "branch"),
+    ]
+
+
+def test_generate_document_from_utterances_builds_explicit_diagram_type_branch() -> None:
+    generator = DiagramGenerator()
+
+    diagram = generator.generate_document_from_utterances(
+        DiagramType.FLOWCHART,
+        [
+            "Then we address intent and create flowchart, timeline, mindmap, and orgchart diagrams.",
+        ],
+    )
+
+    assert [node.data.label for node in diagram.nodes] == [
+        "Address intent",
+        "Flowchart",
+        "Timeline",
+        "Mindmap",
+        "Orgchart",
+    ]
+    assert all(edge.data.kind == "branch" for edge in diagram.edges)
+
+
+def test_generate_document_from_utterances_branches_on_inline_or_targets() -> None:
+    generator = DiagramGenerator()
+
+    diagram = generator.generate_document_from_utterances(
+        DiagramType.FLOWCHART,
+        [
+            "So first off we start with the sales team passing it to the solutions engineering team.",
+            "Then they pass it off to the product team or the engineering team.",
+        ],
+    )
+
+    assert [node.data.label for node in diagram.nodes] == [
+        "So first off we start with the sales team passing it to…",
+        "They pass it off",
+        "Product team",
+        "Engineering team",
+    ]
+    assert [(edge.source, edge.target, edge.data.kind) for edge in diagram.edges] == [
+        (
+            "n-so-first-off-we-start-with-the-sales-team-passing-it-to",
+            "n-they-pass-it-off",
+            "sequence",
+        ),
+        ("n-they-pass-it-off", "n-product-team", "branch"),
+        ("n-they-pass-it-off", "n-engineering-team", "branch"),
+    ]
+
+
+def test_generate_document_from_utterances_builds_cross_utterance_branch() -> None:
+    generator = DiagramGenerator()
+
+    diagram = generator.generate_document_from_utterances(
+        DiagramType.FLOWCHART,
+        [
+            "Transform it into some sort of intent and then we map it out.",
+            "And then we branch out into two categories.",
+            "One being that it is relevant the other being that it's not relevant.",
+        ],
+    )
+
+    assert [node.data.label for node in diagram.nodes] == [
+        "Transform it into some sort of intent and then we map i\u2026",
+        "And then we branch out into two categories",
+        "Relevant",
+        "Not relevant",
+    ]
+    assert [(edge.source, edge.target, edge.data.kind) for edge in diagram.edges] == [
+        (
+            "n-transform-it-into-some-sort-of-intent-and-then-we-map-i",
+            "n-and-then-we-branch-out-into-two-categories",
+            "sequence",
+        ),
+        (
+            "n-and-then-we-branch-out-into-two-categories",
+            "n-relevant",
+            "branch",
+        ),
+        (
+            "n-and-then-we-branch-out-into-two-categories",
+            "n-not-relevant",
+            "branch",
+        ),
+    ]
+
+
 def test_accept_flowchart_delta_skips_meta_chatter() -> None:
     generator = DiagramGenerator()
 
@@ -225,6 +349,49 @@ def test_render_adapter_layout_document_uses_positive_flowchart_gap() -> None:
 
     assert [node.position.x for node in positioned.nodes] == [120, 400, 680, 960]
     assert all(node.position.y == 200 for node in positioned.nodes)
+
+
+def test_render_adapter_layout_document_positions_branches_deterministically() -> None:
+    generator = DiagramGenerator()
+    adapter = RenderAdapter()
+    diagram = generator.generate_document_from_utterances(
+        DiagramType.FLOWCHART,
+        [
+            "First we receive audio from the meeting.",
+            "Then we infer the text via STT.",
+            "Then we address intent and create 1 of 4 diagrams.",
+        ],
+    )
+
+    first = adapter.layout_document(diagram)
+    second = adapter.layout_document(diagram)
+
+    first_positions = {
+        node.data.label: (node.position.x, node.position.y) for node in first.nodes
+    }
+    second_positions = {
+        node.data.label: (node.position.x, node.position.y) for node in second.nodes
+    }
+
+    assert first_positions == second_positions
+    assert first_positions["We receive audio from the meeting"][1] == 100
+    assert first_positions["We infer the text via STT"][1] == 100
+    assert first_positions["Address intent"][1] == 100
+    assert first_positions["Flowchart"][1] == 300
+    assert first_positions["Timeline"][1] == 300
+    assert first_positions["Mindmap"][1] == 300
+    assert first_positions["Orgchart"][1] == 300
+    assert (
+        first_positions["We receive audio from the meeting"][0]
+        < first_positions["We infer the text via STT"][0]
+        < first_positions["Address intent"][0]
+    )
+    assert (
+        first_positions["Flowchart"][0]
+        < first_positions["Timeline"][0]
+        < first_positions["Mindmap"][0]
+        < first_positions["Orgchart"][0]
+    )
 
 
 def test_render_adapter_apply_patch_assigns_position_and_removes_incident_edges() -> None:

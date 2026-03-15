@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 class DiagramGenerator:
     MAX_NODES = 12
     MAX_LABEL = 56
+    DIAGRAM_TYPE_BRANCH_LABELS = (
+        "Flowchart",
+        "Timeline",
+        "Mindmap",
+        "Orgchart",
+    )
 
     # ------------------------------------------------------------------
     # AI facts → DiagramDocument / DiagramPatch
@@ -249,7 +255,7 @@ class DiagramGenerator:
             if not self._is_relevant_flow_utterance(utterance):
                 continue
 
-            label = self._clean_flow_label(utterance)
+            label = self._clean_flow_source_text(utterance)
             if self._is_correction(utterance):
                 if accepted:
                     accepted[-1] = label
@@ -328,56 +334,68 @@ class DiagramGenerator:
         return self._flowchart_facts(normalized)
 
     def _flowchart_facts(self, utterances: list[str]) -> AIFacts:
-        # First pass: look for one-to-many / branching patterns across all utterances.
-        for idx, utterance in enumerate(utterances):
-            branch = self._detect_one_to_many(utterance)
-            if branch:
-                branch_facts = self._branching_facts(branch)
-                prefix_utterances = utterances[:idx]
+        branch_match = self._detect_branching_span(utterances)
+        if branch_match:
+            start_idx, end_idx, branch = branch_match
+            branch_facts = self._branching_facts(branch)
+            prefix_utterances = utterances[:start_idx]
+            suffix_utterances = utterances[end_idx:]
 
-                # No preceding steps — return the branch on its own
-                if not prefix_utterances:
-                    return branch_facts
+            # No preceding or trailing steps — return the branch on its own
+            if not prefix_utterances and not suffix_utterances:
+                return branch_facts
 
-                # Build a linear chain for the utterances that came before the
-                # branching sentence, then connect the last prefix node to the
-                # branch parent with a sequence edge.
-                facts = AIFacts()
-                previous_key: Optional[str] = None
-                max_prefix = self.MAX_NODES - len(branch_facts.nodes)
-                for i, prev_utt in enumerate(
-                    prefix_utterances[:max_prefix], start=1
-                ):
-                    label = self._clean_flow_label(prev_utt)
-                    key = self._semantic_key(label, fallback=f"step_{i}")
-                    facts.nodes.append(
-                        AIFactNode(key=key, label=label, kind="step")
-                    )
-                    if previous_key:
-                        facts.edges.append(
-                            AIFactEdge(
-                                source_key=previous_key,
-                                target_key=key,
-                                kind="sequence",
-                            )
-                        )
-                    previous_key = key
-
-                # Connect last linear node → branch parent
-                branch_parent_key = branch_facts.nodes[0].key
+            facts = AIFacts()
+            previous_key: Optional[str] = None
+            max_prefix = self.MAX_NODES - len(branch_facts.nodes)
+            for i, prev_utt in enumerate(prefix_utterances[:max_prefix], start=1):
+                label = self._clean_flow_label(prev_utt)
+                key = self._semantic_key(label, fallback=f"step_{i}")
+                facts.nodes.append(AIFactNode(key=key, label=label, kind="step"))
                 if previous_key:
                     facts.edges.append(
                         AIFactEdge(
                             source_key=previous_key,
-                            target_key=branch_parent_key,
+                            target_key=key,
                             kind="sequence",
                         )
                     )
+                previous_key = key
 
-                # Merge in branch nodes and edges
-                facts.nodes.extend(branch_facts.nodes)
-                facts.edges.extend(branch_facts.edges)
-                return facts
+            branch_parent_key = branch_facts.nodes[0].key
+            if previous_key:
+                facts.edges.append(
+                    AIFactEdge(
+                        source_key=previous_key,
+                        target_key=branch_parent_key,
+                        kind="sequence",
+                    )
+                )
+
+            facts.nodes.extend(branch_facts.nodes)
+            facts.edges.extend(branch_facts.edges)
+
+            # Keep later transcript visible even though we do not support
+            # merge-back semantics yet.
+            previous_key = branch_parent_key
+            remaining_slots = self.MAX_NODES - len(facts.nodes)
+            for idx, suffix_utt in enumerate(
+                suffix_utterances[:remaining_slots], start=1
+            ):
+                label = self._clean_flow_label(suffix_utt)
+                key = self._semantic_key(label, fallback=f"suffix_{idx}")
+                if any(node.key == key for node in facts.nodes):
+                    continue
+                facts.nodes.append(AIFactNode(key=key, label=label, kind="step"))
+                facts.edges.append(
+                    AIFactEdge(
+                        source_key=previous_key,
+                        target_key=key,
+                        kind="sequence",
+                    )
+                )
+                previous_key = key
+            return facts
 
         # Fallback: linear chain
         facts = AIFacts()
@@ -403,12 +421,38 @@ class DiagramGenerator:
             previous_key = key
         return facts
 
+    def _detect_branching_span(
+        self, utterances: list[str]
+    ) -> Optional[tuple[int, int, tuple[str, list[str]]]]:
+        for idx, utterance in enumerate(utterances):
+            branch = self._detect_one_to_many(utterance)
+            if branch:
+                return (idx, idx + 1, branch)
+
+            branch_intro = self._detect_branch_intro(utterance)
+            if not branch_intro:
+                continue
+
+            parent_label, count_hint = branch_intro
+            for end_idx in range(idx + 2, min(len(utterances), idx + 4) + 1):
+                child_labels = self._detect_branch_children(
+                    utterances[idx + 1 : end_idx],
+                    count_hint=count_hint,
+                )
+                if child_labels:
+                    return (idx, end_idx, (parent_label, child_labels))
+        return None
+
     def _detect_one_to_many(
         self, text: str
     ) -> Optional[tuple[str, list[str]]]:
         """Return (parent_label, [child_labels]) when text expresses a
         one-to-many / categorisation relationship, else None."""
         cleaned = text.strip().rstrip(".!?")
+
+        diagram_type_branch = self._detect_diagram_type_branch(cleaned)
+        if diagram_type_branch:
+            return diagram_type_branch
 
         # Pattern 1: "there are N types/kinds/categories of X: A, B, C"
         m = re.search(
@@ -443,7 +487,18 @@ class DiagramGenerator:
             if len(children) >= 2:
                 return (self._titleize(m.group(1).strip()), children)
 
-        # Pattern 4: "X includes/consists of/is made up of A, B, C"
+        # Pattern 4: "X <verb> to A or B" / "route to A or B"
+        m = re.search(
+            r"(?P<parent>.+?\b(?:to|into|between|among))\s+(?P<children>.+\bor\b.+)",
+            cleaned,
+            re.IGNORECASE,
+        )
+        if m:
+            children = self._parse_list_items(m.group("children"))
+            if len(children) >= 2:
+                return (self._action_branch_parent_label(m.group("parent")), children)
+
+        # Pattern 5: "X includes/consists of/is made up of A, B, C"
         m = re.search(
             r"(.+?)\s+(?:includes?|consists?\s+of|is\s+made\s+up\s+of|is\s+comprised?\s+of|has)\s+(.+)",
             cleaned,
@@ -454,7 +509,7 @@ class DiagramGenerator:
             if len(children) >= 2:
                 return (self._titleize(m.group(1).strip()), children)
 
-        # Pattern 5: "X: A, B and C"  (colon followed by 2+ comma/and-separated items)
+        # Pattern 6: "X: A, B and C"  (colon followed by 2+ comma/and-separated items)
         m = re.match(
             r"^(.+?):\s+(.+)",
             cleaned,
@@ -467,7 +522,7 @@ class DiagramGenerator:
             if len(children) >= 2 and len(parent_candidate.split()) <= 8:
                 return (self._titleize(parent_candidate), children)
 
-        # Pattern 6: "X are/is A and B" / "X are/is A, B, and C" (plain enumeration)
+        # Pattern 7: "X are/is A and B" / "X are/is A, B, and C" (plain enumeration)
         # Requires right-hand side to contain "and" or "or" as a list signal
         m = re.search(
             r"^(.+?)\s+(?:are|is)\s+(.+(?:\band\b|\bor\b).+)",
@@ -481,6 +536,212 @@ class DiagramGenerator:
                 return (self._titleize(parent_candidate), children)
 
         return None
+
+    def _detect_diagram_type_branch(
+        self, text: str
+    ) -> Optional[tuple[str, list[str]]]:
+        shorthand = re.search(
+            r"(?P<prefix>.+?)\b(?:and\s+)?(?:create|creates|creating|generate|generates|produce|produces|render|renders|output|outputs|make|makes|build|builds|select|choose)\s+(?:1|one)\s+of\s+(?:4|four)\s+diagram(?:\s+types?)?s?\b",
+            text,
+            re.IGNORECASE,
+        )
+        if shorthand:
+            return (
+                self._diagram_branch_parent_label(shorthand.group("prefix")),
+                list(self.DIAGRAM_TYPE_BRANCH_LABELS),
+            )
+
+        diagram_types = self._diagram_type_labels_in_text(text)
+        if len(diagram_types) < 2:
+            return None
+
+        first_match_index: Optional[int] = None
+        for _, pattern in self._diagram_type_patterns():
+            found = re.search(pattern, text, re.IGNORECASE)
+            if not found:
+                continue
+            if first_match_index is None or found.start() < first_match_index:
+                first_match_index = found.start()
+
+        prefix = text[:first_match_index] if first_match_index is not None else ""
+        return (
+            self._diagram_branch_parent_label(prefix),
+            diagram_types,
+        )
+
+    def _diagram_type_labels_in_text(self, text: str) -> list[str]:
+        labels: list[str] = []
+        for label, pattern in self._diagram_type_patterns():
+            if re.search(pattern, text, re.IGNORECASE):
+                labels.append(label)
+        return labels
+
+    def _diagram_type_patterns(self) -> tuple[tuple[str, str], ...]:
+        return (
+            ("Flowchart", r"\bflow\s*chart\b"),
+            ("Timeline", r"\btimeline\b"),
+            ("Mindmap", r"\bmind\s*map\b"),
+            ("Orgchart", r"\b(?:org\s*chart|organization\s*chart)\b"),
+        )
+
+    def _diagram_branch_parent_label(self, prefix: str) -> str:
+        cleaned = " ".join(prefix.split()).strip(" ,:-")
+        cleaned = re.sub(
+            r"\b(and\s+)?(?:create|creates|creating|generate|generates|produce|produces|render|renders|output|outputs|make|makes|build|builds|select|choose)\b\s*$",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"\b(?:from there|from here)\b\s*$",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"\b(?:we|you|they|it)\b\s*$",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        ).strip(" ,:-")
+
+        if re.search(r"\bintent\b", cleaned, re.IGNORECASE):
+            return "Address intent"
+        if not cleaned or len(cleaned.split()) <= 1:
+            return "Choose diagram type"
+
+        label = self._clean_flow_label(cleaned)
+        if len(label.split()) <= 1:
+            return "Choose diagram type"
+        return label
+
+    def _action_branch_parent_label(self, text: str) -> str:
+        cleaned = re.sub(
+            r"\b(?:to|into|between|among)\s*$",
+            "",
+            text.strip(),
+            flags=re.IGNORECASE,
+        ).strip(" ,:-")
+        label = self._clean_flow_label(cleaned)
+        return label or "Choose path"
+
+    def _detect_branch_intro(
+        self, text: str
+    ) -> Optional[tuple[str, Optional[int]]]:
+        cleaned = " ".join(text.split()).strip().rstrip(".!?")
+        if not cleaned:
+            return None
+
+        has_branch_intro = bool(
+            re.search(
+                r"\b(branch(?:es|ing)?(?:\s+out)?|choices?|options?|scenarios?|paths?|categories?)\b",
+                cleaned,
+                re.IGNORECASE,
+            )
+        )
+        if not has_branch_intro:
+            return None
+
+        return (self._clean_flow_label(cleaned), self._count_hint(cleaned))
+
+    def _detect_branch_children(
+        self,
+        utterances: list[str],
+        *,
+        count_hint: Optional[int] = None,
+    ) -> Optional[list[str]]:
+        combined = " ".join(
+            " ".join(utterance.split()).strip().rstrip(".!?")
+            for utterance in utterances
+            if utterance.strip()
+        ).strip()
+        if not combined:
+            return None
+
+        enumerated = re.findall(
+            r"(?:^|\b(?:one|two|three|four|first|second|third|fourth|other(?:\s+one)?))\s+(?:is|being)\s+(.+?)(?=(?:\b(?:one|two|three|four|first|second|third|fourth|other(?:\s+one)?))\s+(?:is|being)\b|$)",
+            combined,
+            flags=re.IGNORECASE,
+        )
+        if len(enumerated) >= 2:
+            return [
+                self._normalize_branch_child_label(item)
+                for item in enumerated[: self.MAX_NODES - 1]
+            ]
+
+        children = self._parse_list_items(combined)
+        if len(children) >= 2:
+            return self._normalize_branch_child_labels(children, count_hint)
+
+        return None
+
+    def _normalize_branch_child_labels(
+        self, children: list[str], count_hint: Optional[int]
+    ) -> list[str]:
+        normalized = [
+            self._normalize_branch_child_label(child) for child in children
+        ]
+        if not count_hint or len(normalized) >= count_hint:
+            return normalized[: self.MAX_NODES - 1]
+
+        expanded: list[str] = []
+        remaining_needed = count_hint
+        for child in normalized:
+            words = child.split()
+            can_expand = (
+                len(words) > 1
+                and len(expanded) + len(words) <= count_hint
+                and all(re.fullmatch(r"[A-Za-z0-9&/-]+", word) for word in words)
+            )
+            if can_expand:
+                expanded.extend(words)
+            else:
+                expanded.append(child)
+            remaining_needed = count_hint - len(expanded)
+            if remaining_needed <= 0:
+                break
+
+        return expanded[: self.MAX_NODES - 1]
+
+    def _normalize_branch_child_label(self, text: str) -> str:
+        cleaned = " ".join(text.split()).strip(" ,:-")
+        cleaned = re.sub(r"^(that|it|it[' ]?s)\s+", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(
+            r"^(?:is|being|one|other)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(r"^(?:it\s+is|it[' ]?s)\s+", "", cleaned, flags=re.IGNORECASE)
+
+        if re.search(r"\bnot relevant\b", cleaned, re.IGNORECASE):
+            return "Not relevant"
+        if re.search(r"\brelevant\b", cleaned, re.IGNORECASE):
+            return "Relevant"
+
+        return self._titleize(cleaned)
+
+    def _count_hint(self, text: str) -> Optional[int]:
+        match = re.search(
+            r"\b(1|2|3|4|one|two|three|four)\b",
+            text,
+            re.IGNORECASE,
+        )
+        if not match:
+            return None
+
+        value = match.group(1).lower()
+        mapping = {
+            "1": 1,
+            "2": 2,
+            "3": 3,
+            "4": 4,
+            "one": 1,
+            "two": 2,
+            "three": 3,
+            "four": 4,
+        }
+        return mapping.get(value)
 
     def _parse_list_items(self, text: str) -> list[str]:
         """Split "A, B, and C" or "A or B" into ["A", "B", "C"]."""
@@ -670,6 +931,9 @@ class DiagramGenerator:
         return normalized[: self.MAX_NODES] or ["Awaiting transcript"]
 
     def _clean_flow_label(self, text: str) -> str:
+        return self._truncate(self._clean_flow_source_text(text))
+
+    def _clean_flow_source_text(self, text: str) -> str:
         cleaned = self._strip_correction_prefix(text)
         cleaned = cleaned.strip().rstrip(".!?")
         cleaned = re.sub(
@@ -683,7 +947,7 @@ class DiagramGenerator:
             if len(parts) == 2 and parts[1].strip():
                 cleaned = parts[1].strip()
         cleaned = cleaned[:1].upper() + cleaned[1:] if cleaned else "Awaiting transcript"
-        return self._truncate(cleaned)
+        return cleaned
 
     def _is_relevant_flow_utterance(self, text: str) -> bool:
         cleaned = " ".join(text.split()).strip()
