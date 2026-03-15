@@ -108,7 +108,7 @@ async def _pause_watcher(
     """
     synthetic = UICommandEvent(type="ui.command", command="pause.detected", payload={})
     while True:
-        await asyncio.sleep(0.25)
+        await asyncio.sleep(0.1)
         try:
             async with session_manager.session_lock(session_id):
                 state = await session_manager.get_or_create(session_id=session_id)

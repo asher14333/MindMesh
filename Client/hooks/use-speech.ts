@@ -22,7 +22,7 @@ function makeSpeakerId() {
   return `spk-${Math.random().toString(36).slice(2, 10)}`
 }
 
-const FINAL_DEBOUNCE_MS = 600
+const FINAL_DEBOUNCE_MS = 200
 const CONNECTOR_ONLY_FINALS = new Set([
   "first",
   "then",
