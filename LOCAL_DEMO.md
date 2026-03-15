@@ -11,7 +11,7 @@ MINDMESH_LLM_MODEL=gpt-5-mini
 ```
 
 2. Create `client/.env.local`:
-
+##
 ```env
 NEXT_PUBLIC_MINDMESH_WS_URL=ws://localhost:8000
 NEXT_PUBLIC_MINDMESH_DEBUG=1
