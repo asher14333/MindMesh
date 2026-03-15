@@ -1,4 +1,6 @@
 import logging
+import time
+from dataclasses import dataclass, field
 from typing import Optional
 
 from app.config import Settings
@@ -17,7 +19,7 @@ from app.schemas.events import (
     TranscriptUpdateEvent,
     UICommandEvent,
 )
-from app.schemas.intent import IntentAction, IntentResult, ScopeRelation
+from app.schemas.intent import IntentAction, IntentResult, IntentSource, ScopeRelation
 from app.state.session_state import SessionMode, SessionState
 
 from .diagram_generator import DiagramGenerator
@@ -28,6 +30,41 @@ from .transcript_buffer import TranscriptBuffer
 from .trigger_engine import TriggerEngine
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class GenerationRequest:
+    request_id: int
+    trigger_reason: Optional[str]
+    delta: str
+    utterances: list[str]
+    end_offset: int
+    end_utterance_index: int
+    graph_summary: str
+    scope_summary: str
+    current_diagram: Optional[DiagramDocument]
+    attempt_model: bool
+
+
+@dataclass
+class GenerationExecution:
+    request: GenerationRequest
+    ai_response: Optional[AIResponse]
+    latency_ms: int
+
+
+@dataclass
+class PreparedEvent:
+    outbound_events: list[OutboundEvent] = field(default_factory=list)
+    generation_request: Optional[GenerationRequest] = None
+
+
+@dataclass
+class ResolvedGeneration:
+    intent: IntentResult
+    ai_response: Optional[AIResponse]
+    use_ai_facts: bool
+    source_utterances: list[str] = field(default_factory=list)
 
 
 class SessionPipeline:
@@ -43,9 +80,19 @@ class SessionPipeline:
     async def handle_event(
         self, state: SessionState, event: InboundEvent
     ) -> list[OutboundEvent]:
-        outbound: list[OutboundEvent] = []
+        prepared = self.prepare_event(state, event)
+        outbound = list(prepared.outbound_events)
+        if not prepared.generation_request:
+            return outbound
 
-        # ---- lifecycle events ----
+        execution = await self.run_generation(prepared.generation_request)
+        outbound.extend(self.apply_generation_result(state, execution))
+        return outbound
+
+    def prepare_event(
+        self, state: SessionState, event: InboundEvent
+    ) -> PreparedEvent:
+        outbound: list[OutboundEvent] = []
 
         if isinstance(event, SessionStartEvent):
             if event.meeting_title:
@@ -58,9 +105,10 @@ class SessionPipeline:
                     diagram_type=state.diagram_type,
                 )
             )
-            return outbound
+            return PreparedEvent(outbound_events=outbound)
 
         if isinstance(event, SessionStopEvent):
+            self._invalidate_inflight_requests(state)
             state.mode = SessionMode.STANDBY
             outbound.append(
                 StatusEvent(
@@ -70,28 +118,34 @@ class SessionPipeline:
                     diagram_type=state.diagram_type,
                 )
             )
-            return outbound
-
-        # ---- commands ----
+            return PreparedEvent(outbound_events=outbound)
 
         if isinstance(event, UICommandEvent):
             outbound.extend(self._handle_command(state, event))
             if event.command == "diagram.reset":
-                return outbound
-
-        # ---- transcript ----
+                return PreparedEvent(outbound_events=outbound)
 
         if isinstance(event, SpeechPartialEvent):
             text = self.transcript_buffer.preview_partial(state, event.text)
             if text:
                 speaker_label = f" [{event.speaker}]" if event.speaker else ""
-                logger.info("[%s] speech.partial%s | dropped=%r", state.session_id, speaker_label, text)
+                logger.info(
+                    "[%s] speech.partial%s | dropped=%r",
+                    state.session_id,
+                    speaker_label,
+                    text,
+                )
 
         if isinstance(event, SpeechFinalEvent):
             text = self.transcript_buffer.commit_final(state, event.text)
             if text:
                 speaker_label = f" [{event.speaker}]" if event.speaker else ""
-                logger.info("[%s] speech.FINAL%s | %r", state.session_id, speaker_label, text)
+                logger.info(
+                    "[%s] speech.FINAL%s | %r",
+                    state.session_id,
+                    speaker_label,
+                    text,
+                )
                 outbound.append(
                     TranscriptUpdateEvent(
                         text=text,
@@ -100,101 +154,143 @@ class SessionPipeline:
                     )
                 )
 
-        # ---- trigger check ----
+        unscheduled_text = self.transcript_buffer.pending_delta(state)
+        decision = self.trigger_engine.should_generate(state, event, unscheduled_text)
+        if not decision.should_generate:
+            return PreparedEvent(outbound_events=outbound)
 
         unread_text = self.transcript_buffer.unread_text(state)
-        decision = self.trigger_engine.should_generate(state, event, unread_text)
-        if not decision.should_generate:
-            return outbound
+        unread_utterances = self.transcript_buffer.unread_utterances(state)
+        if not unread_text.strip() or not unread_utterances:
+            state.last_processed_offset = len(state.committed_transcript)
+            return PreparedEvent(outbound_events=outbound)
+
         self._record_trigger(state, decision.reason)
+        state.last_request_id += 1
+        request_id = state.last_request_id
+        if self.model_orchestrator.is_available():
+            state.telemetry.model_calls += 1
+
+        end_offset = len(state.committed_transcript)
+        end_utterance_index = len(state.committed_utterances)
+        state.last_processed_offset = end_offset
 
         logger.info(
-            "[%s] trigger=%s | unread=%d chars",
+            "[%s] generation.request request_id=%d trigger=%s unread_chars=%d utterances=%d",
             state.session_id,
-            decision.reason,
+            request_id,
+            decision.reason or "unknown",
             len(unread_text),
+            len(unread_utterances),
         )
 
-        # =============================================================
-        # 4-STEP PIPELINE
-        # =============================================================
-
-        # STEP 1 — delta extraction & fast relevance filter
-        delta = self.transcript_buffer.pending_delta(state)
-        if not delta.strip():
-            state.last_processed_offset = len(state.committed_transcript)
-            return outbound
-
-        # STEP 2 — rules-based classification
-        intent = self.intent_classifier.classify(delta, state)
-
-        # STEP 3 — model-assisted interpretation when available
-        ai_response: Optional[AIResponse] = None
-
-        if self.model_orchestrator.is_available():
-            state.last_request_id += 1
-            state.telemetry.model_calls += 1
-            ai_response = await self.model_orchestrator.generate(
-                delta=delta,
-                diagram_type=state.locked_diagram_type or intent.diagram_type,
+        return PreparedEvent(
+            outbound_events=outbound,
+            generation_request=GenerationRequest(
+                request_id=request_id,
+                trigger_reason=decision.reason,
+                delta="\n".join(unread_utterances),
+                utterances=list(unread_utterances),
+                end_offset=end_offset,
+                end_utterance_index=end_utterance_index,
                 graph_summary=self._build_graph_summary(state),
                 scope_summary=self._scope_summary_for_prompt(state),
-                request_id=state.last_request_id,
-                current_diagram=state.diagram if state.diagram.nodes else None,
+                current_diagram=(
+                    state.diagram.model_copy(deep=True)
+                    if state.diagram.nodes
+                    else None
+                ),
+                attempt_model=self.model_orchestrator.is_available(),
+            ),
+        )
+
+    async def run_generation(
+        self, request: GenerationRequest
+    ) -> GenerationExecution:
+        started_at = time.perf_counter()
+        ai_response: Optional[AIResponse] = None
+
+        if request.attempt_model:
+            ai_response = await self.model_orchestrator.generate(
+                delta=request.delta,
+                diagram_type=DiagramType.FLOWCHART,
+                graph_summary=request.graph_summary,
+                scope_summary=request.scope_summary,
+                request_id=request.request_id,
+                current_diagram=request.current_diagram,
             )
-            if ai_response and ai_response.request_id == state.last_request_id:
-                state.telemetry.model_successes += 1
-                intent = self._merge_ai_result(intent, ai_response)
 
-        state.last_processed_offset = len(state.committed_transcript)
+        latency_ms = int((time.perf_counter() - started_at) * 1000)
+        return GenerationExecution(
+            request=request,
+            ai_response=ai_response,
+            latency_ms=latency_ms,
+        )
 
-        if intent.scope_relation == ScopeRelation.OUT_OF_SCOPE:
-            self._consume_ignored_delta(state)
+    def apply_generation_result(
+        self, state: SessionState, execution: GenerationExecution
+    ) -> list[OutboundEvent]:
+        request = execution.request
+        if request.request_id != state.last_request_id:
+            logger.info(
+                "[%s] generation.discard stale_request request_id=%d current=%d",
+                state.session_id,
+                request.request_id,
+                state.last_request_id,
+            )
+            return []
+
+        resolved = self._resolve_generation(state, execution)
+        outbound: list[OutboundEvent] = [IntentResultEvent(result=resolved.intent)]
+
+        if execution.ai_response and resolved.intent.source == IntentSource.LLM:
+            state.telemetry.model_successes += 1
+
+        logger.info(
+            "[%s] intent action=%s scope=%s source=%s trigger=%s latency_ms=%s confidence=%.2f",
+            state.session_id,
+            resolved.intent.action.value,
+            resolved.intent.scope_relation.value,
+            resolved.intent.source.value,
+            resolved.intent.trigger_reason or "unknown",
+            resolved.intent.latency_ms,
+            resolved.intent.confidence,
+        )
+
+        if (
+            resolved.intent.scope_relation == ScopeRelation.OUT_OF_SCOPE
+            or resolved.intent.action == IntentAction.NOOP
+        ):
+            self._consume_ignored_delta(state, request)
             return outbound
-        if intent.action == IntentAction.NOOP and intent.confidence < 0.65:
-            self._consume_ignored_delta(state)
-            return outbound
 
-        self.intent_classifier.update_scope_lock(state, intent)
-
-        # STEP 4 — deterministic graph planning
-        effective_type = state.locked_diagram_type or intent.diagram_type
-        if effective_type == DiagramType.NONE:
-            effective_type = DiagramType.FLOWCHART
-
-        use_ai_facts = self._should_use_ai_facts(ai_response)
-        if effective_type == DiagramType.FLOWCHART and not use_ai_facts:
-            self._apply_flowchart_acceptance(state, delta)
-            if not state.accepted_utterances:
-                self._consume_ignored_delta(state)
-                return outbound
-
-        outbound.append(IntentResultEvent(result=intent))
-        logger.info("[%s] intent=%s confidence=%.2f", state.session_id, intent.diagram_type, intent.confidence)
-
-        if intent.action == IntentAction.NOOP:
-            self._consume_ignored_delta(state)
-            return outbound
+        effective_type = DiagramType.FLOWCHART
+        used_ai_facts = resolved.use_ai_facts
 
         needs_replace = (
             not state.diagram.nodes
             or state.diagram.diagram_type != effective_type
-            or intent.action == IntentAction.REPLACE
+            or resolved.intent.action == IntentAction.REPLACE
         )
-        used_ai_facts = use_ai_facts
 
         if needs_replace:
             diagram = self._build_full(
-                ai_response, effective_type, state, use_ai_facts=use_ai_facts
+                resolved.ai_response,
+                effective_type,
+                state,
+                use_ai_facts=used_ai_facts,
+                source_utterances=resolved.source_utterances,
             )
             diagram = self.render_adapter.layout_document(diagram)
-            self._commit_diagram(state, diagram, effective_type)
+            self._commit_diagram(state, diagram, effective_type, request)
             self._record_generation(
                 state=state,
-                trigger_reason=decision.reason,
+                trigger_reason=request.trigger_reason,
                 event_type="replace",
                 used_ai_facts=used_ai_facts,
-                is_correction=intent.scope_relation == ScopeRelation.CORRECTION,
+                is_correction=(
+                    resolved.intent.scope_relation == ScopeRelation.CORRECTION
+                ),
             )
             logger.info(
                 "[%s] diagram.replace type=%s nodes=%d",
@@ -206,7 +302,11 @@ class SessionPipeline:
             return outbound
 
         patch = self._build_patch(
-            ai_response, effective_type, state, use_ai_facts=use_ai_facts
+            resolved.ai_response,
+            effective_type,
+            state,
+            use_ai_facts=used_ai_facts,
+            source_utterances=resolved.source_utterances,
         )
         if patch and patch.ops:
             if patch.base_version != state.diagram.version:
@@ -217,16 +317,22 @@ class SessionPipeline:
                     state.diagram.version,
                 )
                 diagram = self._build_full(
-                    ai_response, effective_type, state, use_ai_facts=use_ai_facts
+                    resolved.ai_response,
+                    effective_type,
+                    state,
+                    use_ai_facts=used_ai_facts,
+                    source_utterances=resolved.source_utterances,
                 )
                 diagram = self.render_adapter.layout_document(diagram)
-                self._commit_diagram(state, diagram, effective_type)
+                self._commit_diagram(state, diagram, effective_type, request)
                 self._record_generation(
                     state=state,
-                    trigger_reason=decision.reason,
+                    trigger_reason=request.trigger_reason,
                     event_type="replace",
                     used_ai_facts=used_ai_facts,
-                    is_correction=intent.scope_relation == ScopeRelation.CORRECTION,
+                    is_correction=(
+                        resolved.intent.scope_relation == ScopeRelation.CORRECTION
+                    ),
                 )
                 outbound.append(DiagramReplaceEvent(diagram=diagram))
                 return outbound
@@ -234,32 +340,43 @@ class SessionPipeline:
             updated_diagram, emitted_patch = self.render_adapter.apply_patch_with_emitted(
                 state.diagram, patch
             )
-            self._commit_diagram(state, updated_diagram, effective_type)
+            self._commit_diagram(state, updated_diagram, effective_type, request)
             self._record_generation(
                 state=state,
-                trigger_reason=decision.reason,
+                trigger_reason=request.trigger_reason,
                 event_type="patch",
                 used_ai_facts=used_ai_facts,
                 is_correction=False,
             )
-            logger.info("[%s] diagram.patch ops=%d", state.session_id, len(patch.ops))
+            logger.info(
+                "[%s] diagram.patch ops=%d",
+                state.session_id,
+                len(patch.ops),
+            )
             outbound.append(DiagramPatchEvent(patch=emitted_patch))
             return outbound
 
         diagram = self._build_full(
-            ai_response, effective_type, state, use_ai_facts=use_ai_facts
+            resolved.ai_response,
+            effective_type,
+            state,
+            use_ai_facts=used_ai_facts,
+            source_utterances=resolved.source_utterances,
         )
         if self._diagrams_equivalent(state.diagram, diagram):
-            self._consume_ignored_delta(state)
+            self._consume_ignored_delta(state, request)
             return outbound
+
         diagram = self.render_adapter.layout_document(diagram)
-        self._commit_diagram(state, diagram, effective_type)
+        self._commit_diagram(state, diagram, effective_type, request)
         self._record_generation(
             state=state,
-            trigger_reason=decision.reason,
+            trigger_reason=request.trigger_reason,
             event_type="replace",
             used_ai_facts=used_ai_facts,
-            is_correction=intent.scope_relation == ScopeRelation.CORRECTION,
+            is_correction=(
+                resolved.intent.scope_relation == ScopeRelation.CORRECTION
+            ),
         )
         logger.info(
             "[%s] diagram.replace (fallback) type=%s nodes=%d",
@@ -269,6 +386,95 @@ class SessionPipeline:
         )
         outbound.append(DiagramReplaceEvent(diagram=diagram))
         return outbound
+
+    def _resolve_generation(
+        self, state: SessionState, execution: GenerationExecution
+    ) -> ResolvedGeneration:
+        request = execution.request
+        ai_response = execution.ai_response
+
+        if ai_response:
+            ai_intent = self._intent_from_ai(
+                ai_response,
+                trigger_reason=request.trigger_reason,
+                latency_ms=execution.latency_ms,
+            )
+            if (
+                ai_intent.scope_relation == ScopeRelation.OUT_OF_SCOPE
+                or ai_intent.action == IntentAction.NOOP
+            ):
+                return ResolvedGeneration(
+                    intent=ai_intent,
+                    ai_response=ai_response,
+                    use_ai_facts=False,
+                )
+            if self._should_use_ai_facts(ai_response):
+                return ResolvedGeneration(
+                    intent=ai_intent,
+                    ai_response=ai_response,
+                    use_ai_facts=True,
+                )
+            logger.warning(
+                "[%s] generation.fallback reason=llm_missing_facts request_id=%d",
+                state.session_id,
+                request.request_id,
+            )
+
+        candidate_delta_utterances = self.diagram_generator.accept_flowchart_utterances(
+            [],
+            request.utterances,
+        )
+        candidate_utterances = self.diagram_generator.accept_flowchart_utterances(
+            state.accepted_utterances,
+            request.utterances,
+        )
+        fallback_intent = self.intent_classifier.classify_flowchart_fallback(
+            request.delta,
+            has_candidate_steps=bool(candidate_delta_utterances),
+            trigger_reason=request.trigger_reason,
+            latency_ms=execution.latency_ms if request.attempt_model else 0,
+        )
+        return ResolvedGeneration(
+            intent=fallback_intent,
+            ai_response=None,
+            use_ai_facts=False,
+            source_utterances=(
+                candidate_utterances if candidate_delta_utterances else []
+            ),
+        )
+
+    def _intent_from_ai(
+        self,
+        ai: AIResponse,
+        *,
+        trigger_reason: Optional[str],
+        latency_ms: int,
+    ) -> IntentResult:
+        diagram_type = (
+            DiagramType.FLOWCHART
+            if ai.decision.diagram_type == "flowchart"
+            else DiagramType.NONE
+        )
+        scope_relation = (
+            ScopeRelation.CORRECTION
+            if ai.decision.scope_relation == "correction"
+            else ScopeRelation.OUT_OF_SCOPE
+            if ai.decision.scope_relation == "out_of_scope"
+            else ScopeRelation.IN_SCOPE
+        )
+        action = IntentAction(ai.decision.action)
+        if diagram_type == DiagramType.NONE:
+            action = IntentAction.NOOP
+        return IntentResult(
+            diagram_type=diagram_type,
+            confidence=ai.decision.confidence,
+            action=action,
+            reason=ai.reason or "llm_flowchart_primary",
+            scope_relation=scope_relation,
+            source=IntentSource.LLM,
+            trigger_reason=trigger_reason,
+            latency_ms=latency_ms,
+        )
 
     # ------------------------------------------------------------------
     # Helpers
@@ -281,8 +487,9 @@ class SessionPipeline:
         state: SessionState,
         *,
         use_ai_facts: bool,
+        source_utterances: Optional[list[str]] = None,
     ) -> DiagramDocument:
-        if use_ai_facts:
+        if use_ai_facts and ai_response:
             return self.diagram_generator.generate_from_facts(
                 ai_response.facts,
                 effective_type,
@@ -290,7 +497,7 @@ class SessionPipeline:
             )
         return self.diagram_generator.generate_document_from_utterances(
             effective_type,
-            self._source_utterances(state, effective_type),
+            source_utterances or self._source_utterances(state, effective_type),
             current=state.diagram if state.diagram.nodes else None,
         )
 
@@ -301,60 +508,34 @@ class SessionPipeline:
         state: SessionState,
         *,
         use_ai_facts: bool,
+        source_utterances: Optional[list[str]] = None,
     ) -> Optional[DiagramPatch]:
-        if use_ai_facts:
+        if use_ai_facts and ai_response:
             return self.diagram_generator.generate_patch_from_facts(
                 ai_response.facts, effective_type, state.diagram
             )
         return self.diagram_generator.generate_patch_from_utterances(
             effective_type,
-            self._source_utterances(state, effective_type),
+            source_utterances or self._source_utterances(state, effective_type),
             state.diagram,
         )
 
-    def _should_use_ai_facts(
-        self, ai_response: Optional[AIResponse]
-    ) -> bool:
+    def _should_use_ai_facts(self, ai_response: Optional[AIResponse]) -> bool:
         return bool(ai_response and ai_response.facts.nodes)
-
-    def _merge_ai_result(
-        self, rules_intent: IntentResult, ai: AIResponse
-    ) -> IntentResult:
-        try:
-            ai_type = DiagramType(ai.decision.diagram_type)
-        except ValueError:
-            ai_type = rules_intent.diagram_type
-        try:
-            ai_scope = ScopeRelation(ai.decision.scope_relation)
-        except ValueError:
-            ai_scope = rules_intent.scope_relation
-        try:
-            ai_action = IntentAction(ai.decision.action)
-        except ValueError:
-            ai_action = rules_intent.action
-
-        if ai.decision.confidence >= 0.65:
-            return IntentResult(
-                diagram_type=ai_type,
-                confidence=ai.decision.confidence,
-                action=ai_action,
-                reason=ai.reason or rules_intent.reason,
-                scope_relation=ai_scope,
-            )
-        return rules_intent
 
     def _build_graph_summary(self, state: SessionState) -> str:
         if not state.diagram.nodes:
             return ""
         node_parts = [
-            f"{n.id}({n.data.kind}: {n.data.label})"
-            for n in state.diagram.nodes[:12]
+            f"{node.id}({node.data.kind}: {node.data.label})"
+            for node in state.diagram.nodes[:12]
         ]
         edge_parts = [
-            f"{e.source}->{e.target}" for e in state.diagram.edges[:16]
+            f"{edge.source}->{edge.target}" for edge in state.diagram.edges[:16]
         ]
-        dt = state.diagram.diagram_type.value
-        lines = [f"{dt}, {len(state.diagram.nodes)} nodes, {len(state.diagram.edges)} edges"]
+        lines = [
+            f"{state.diagram.diagram_type.value}, {len(state.diagram.nodes)} nodes, {len(state.diagram.edges)} edges"
+        ]
         if node_parts:
             lines.append(f"Nodes: {', '.join(node_parts)}")
         if edge_parts:
@@ -366,18 +547,33 @@ class SessionPipeline:
         state: SessionState,
         diagram: DiagramDocument,
         effective_type: DiagramType,
+        request: GenerationRequest,
     ) -> None:
         state.diagram = diagram
         state.diagram_type = effective_type
         state.last_applied_version = diagram.version
         self._sync_accepted_utterances(state)
         self._refresh_scope_summary(state)
-        self.transcript_buffer.mark_generated(state)
+        self.transcript_buffer.mark_generated(
+            state,
+            offset=request.end_offset,
+            utterance_index=request.end_utterance_index,
+        )
         self.trigger_engine.arm_cooldown(state)
 
-    def _consume_ignored_delta(self, state: SessionState) -> None:
-        self.transcript_buffer.mark_generated(state)
+    def _consume_ignored_delta(
+        self, state: SessionState, request: GenerationRequest
+    ) -> None:
+        self.transcript_buffer.mark_generated(
+            state,
+            offset=request.end_offset,
+            utterance_index=request.end_utterance_index,
+        )
         self.trigger_engine.arm_cooldown(state)
+
+    def _invalidate_inflight_requests(self, state: SessionState) -> None:
+        state.last_request_id += 1
+        state.last_processed_offset = state.last_generated_offset
 
     def _record_trigger(self, state: SessionState, reason: Optional[str]) -> None:
         key = reason or "unknown"
@@ -431,6 +627,8 @@ class SessionPipeline:
             state.mode = (
                 SessionMode.VISUALIZING if enabled else SessionMode.STANDBY
             )
+            if not enabled:
+                self._invalidate_inflight_requests(state)
             outbound.append(
                 StatusEvent(
                     session_id=state.session_id,
@@ -442,19 +640,20 @@ class SessionPipeline:
             return outbound
 
         if event.command == "diagram.reset":
+            self._invalidate_inflight_requests(state)
             state.diagram = DiagramDocument()
             state.diagram_type = DiagramType.NONE
             state.locked_diagram_type = None
             state.scope_summary = ""
             state.scope_keywords = []
             state.switch_streak = 0
-            state.last_request_id = 0
             state.last_applied_version = 0
             state.committed_transcript = ""
             state.preview_transcript = ""
             state.committed_utterances = []
             state.accepted_utterances = []
             state.last_generated_offset = 0
+            state.last_generated_utterance_index = 0
             state.last_processed_offset = 0
             state.last_chunk_at = 0.0
             state.last_generation_at = 0.0
@@ -473,10 +672,10 @@ class SessionPipeline:
         if event.command.startswith("diagram.type.") and event.payload.get(
             "diagram_type"
         ):
+            self._invalidate_inflight_requests(state)
             try:
-                new_type = DiagramType(event.payload["diagram_type"])
-                state.diagram_type = new_type
-                state.locked_diagram_type = new_type
+                state.diagram_type = DiagramType(event.payload["diagram_type"])
+                state.locked_diagram_type = None
                 state.switch_streak = 0
             except ValueError:
                 pass
@@ -498,14 +697,6 @@ class SessionPipeline:
             return state.accepted_utterances
         return state.committed_utterances
 
-    def _apply_flowchart_acceptance(
-        self, state: SessionState, transcript_delta: str
-    ) -> None:
-        state.accepted_utterances = self.diagram_generator.accept_flowchart_delta(
-            state.accepted_utterances,
-            transcript_delta,
-        )
-
     def _sync_accepted_utterances(self, state: SessionState) -> None:
         if state.diagram.diagram_type != DiagramType.FLOWCHART:
             state.accepted_utterances = []
@@ -524,7 +715,9 @@ class SessionPipeline:
                 state.diagram.nodes,
                 key=lambda node: (node.position.y, node.position.x, node.id),
             )
-            labels = [node.data.label for node in ordered_nodes[:4] if node.data.label]
+            labels = [
+                node.data.label for node in ordered_nodes[:4] if node.data.label
+            ]
             state.scope_summary = " -> ".join(labels)
             return
         if state.accepted_utterances:

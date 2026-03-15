@@ -139,7 +139,11 @@ function summarizeEvent(event: ServerEvent): string {
       return `transcript.update final=${event.is_final} len=${event.text.length}`
     case "intent.result": {
       const result = event.result
-      return `intent ${result.diagram_type} action=${result.action} conf=${result.confidence.toFixed(2)}`
+      return (
+        `intent ${result.diagram_type} action=${result.action} ` +
+        `scope=${result.scope_relation} source=${result.source} ` +
+        `conf=${result.confidence.toFixed(2)}`
+      )
     }
     case "diagram.replace":
       return `replace v=${event.diagram.version} nodes=${event.diagram.nodes.length} edges=${event.diagram.edges.length}`

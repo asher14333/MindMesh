@@ -29,8 +29,26 @@ def _run(pipeline: SessionPipeline, state: SessionState, event):
 def _settings() -> Settings:
     return Settings(
         generation_cooldown_seconds=0.0,
-        min_new_chars=999,
+        min_new_chars=1,
     )
+
+
+def _flush(pipeline: SessionPipeline, state: SessionState):
+    return _run(
+        pipeline,
+        state,
+        UICommandEvent(type="ui.command", command="pause.detected", payload={}),
+    )
+
+
+def _speak_and_flush(
+    pipeline: SessionPipeline, state: SessionState, text: str
+):
+    return _run(
+        pipeline,
+        state,
+        SpeechFinalEvent(type="speech.final", text=text),
+    ) + _flush(pipeline, state)
 
 
 def _ai_response_for_flowchart_graph(
@@ -82,18 +100,16 @@ class _CanonicalFlowchartModelOrchestrator:
         graph_summary: str,
         scope_summary: str,
         request_id: int = 0,
+        current_diagram=None,
     ) -> AIResponse:
         normalized = delta.lower()
-        if "sales hands off" in normalized:
-            return _ai_response_for_flowchart_graph(
-                ["Sales hands off the deal to solutions engineering"],
-                request_id=request_id,
-            )
-        if "security reviews" in normalized:
+        if "provisioning starts" in normalized:
             return _ai_response_for_flowchart_graph(
                 [
                     "Sales hands off the deal to solutions engineering",
                     "Security reviews the integration requirements",
+                    "Legal approves the MSA",
+                    "Provisioning starts and customer success is notified",
                 ],
                 request_id=request_id,
             )
@@ -115,14 +131,17 @@ class _CanonicalFlowchartModelOrchestrator:
                 scope_relation="correction" if "actually" in normalized else "in_scope",
                 request_id=request_id,
             )
-        if "provisioning starts" in normalized:
+        if "security reviews" in normalized:
             return _ai_response_for_flowchart_graph(
                 [
                     "Sales hands off the deal to solutions engineering",
                     "Security reviews the integration requirements",
-                    "Legal approves the MSA",
-                    "Provisioning starts and customer success is notified",
                 ],
+                request_id=request_id,
+            )
+        if "sales hands off" in normalized:
+            return _ai_response_for_flowchart_graph(
+                ["Sales hands off the deal to solutions engineering"],
                 request_id=request_id,
             )
         if "okay that kind of works" in normalized or "what's going to happen next" in normalized:
@@ -137,6 +156,30 @@ class _CanonicalFlowchartModelOrchestrator:
                 request_id=request_id,
             )
         return AIResponse(request_id=request_id)
+
+
+class _DelayedCanonicalFlowchartModelOrchestrator(_CanonicalFlowchartModelOrchestrator):
+    def __init__(self, delay_seconds: float = 0.01) -> None:
+        self.delay_seconds = delay_seconds
+
+    async def generate(
+        self,
+        delta: str,
+        diagram_type: DiagramType,
+        graph_summary: str,
+        scope_summary: str,
+        request_id: int = 0,
+        current_diagram=None,
+    ) -> AIResponse:
+        await asyncio.sleep(self.delay_seconds)
+        return await super().generate(
+            delta=delta,
+            diagram_type=diagram_type,
+            graph_summary=graph_summary,
+            scope_summary=scope_summary,
+            request_id=request_id,
+            current_diagram=current_diagram,
+        )
 
 
 def test_pipeline_replaces_then_patches_for_flowchart_updates() -> None:
@@ -155,13 +198,10 @@ def test_pipeline_replaces_then_patches_for_flowchart_updates() -> None:
     assert state.mode == SessionMode.VISUALIZING
     assert len(toggle_events) == 1
 
-    first_events = _run(
+    first_events = _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="First sales hands off the deal to solutions engineering.",
-        ),
+        "First sales hands off the deal to solutions engineering.",
     )
 
     assert [type(event) for event in first_events] == [
@@ -171,15 +211,12 @@ def test_pipeline_replaces_then_patches_for_flowchart_updates() -> None:
     ]
     assert state.diagram_type == DiagramType.FLOWCHART
     assert state.locked_diagram_type is None
-    assert state.switch_streak == 1
+    assert state.switch_streak == 0
 
-    second_events = _run(
+    second_events = _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="Then security reviews the integration requirements.",
-        ),
+        "Then security reviews the integration requirements.",
     )
 
     assert [type(event) for event in second_events] == [
@@ -187,7 +224,7 @@ def test_pipeline_replaces_then_patches_for_flowchart_updates() -> None:
         IntentResultEvent,
         DiagramPatchEvent,
     ]
-    assert state.locked_diagram_type == DiagramType.FLOWCHART
+    assert state.last_generated_utterance_index == 2
     assert state.diagram.version == 2
     assert len(state.diagram.nodes) == 2
 
@@ -197,13 +234,10 @@ def test_pipeline_flowchart_ai_canonical_graph_appends_without_committed_noise()
     pipeline.model_orchestrator = _CanonicalFlowchartModelOrchestrator()
     state = SessionState(session_id="ai-flowchart", mode=SessionMode.VISUALIZING)
 
-    first_events = _run(
+    first_events = _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="First sales hands off the deal to solutions engineering.",
-        ),
+        "First sales hands off the deal to solutions engineering.",
     )
     assert [type(event) for event in first_events] == [
         TranscriptUpdateEvent,
@@ -214,13 +248,10 @@ def test_pipeline_flowchart_ai_canonical_graph_appends_without_committed_noise()
         "Sales hands off the deal to solutions engineering"
     ]
 
-    second_events = _run(
+    second_events = _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="Then security reviews the integration requirements.",
-        ),
+        "Then security reviews the integration requirements.",
     )
     assert [type(event) for event in second_events] == [
         TranscriptUpdateEvent,
@@ -232,13 +263,10 @@ def test_pipeline_flowchart_ai_canonical_graph_appends_without_committed_noise()
         "Security reviews the integration requirements",
     ]
 
-    third_events = _run(
+    third_events = _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="After security sign-off, legal approves the MSA.",
-        ),
+        "After security sign-off, legal approves the MSA.",
     )
     assert [type(event) for event in third_events] == [
         TranscriptUpdateEvent,
@@ -251,13 +279,10 @@ def test_pipeline_flowchart_ai_canonical_graph_appends_without_committed_noise()
         "Legal approves the MSA",
     ]
 
-    fourth_events = _run(
+    fourth_events = _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="Finally provisioning starts and customer success is notified.",
-        ),
+        "Finally provisioning starts and customer success is notified.",
     )
     assert [type(event) for event in fourth_events] == [
         TranscriptUpdateEvent,
@@ -318,16 +343,8 @@ def test_partial_heavy_sequence_matches_final_only_diagram() -> None:
             SpeechPartialEvent(type="speech.partial", text=partial),
         )
 
-    partial_events = _run(
-        pipeline,
-        partial_state,
-        SpeechFinalEvent(type="speech.final", text=final_text),
-    )
-    final_events = _run(
-        pipeline,
-        final_only_state,
-        SpeechFinalEvent(type="speech.final", text=final_text),
-    )
+    partial_events = _speak_and_flush(pipeline, partial_state, final_text)
+    final_events = _speak_and_flush(pipeline, final_only_state, final_text)
 
     assert [type(event) for event in partial_events] == [
         TranscriptUpdateEvent,
@@ -349,38 +366,25 @@ def test_partial_heavy_sequence_matches_final_only_diagram() -> None:
     ]
 
 
-def test_pipeline_filters_out_of_scope_transcript_after_lock() -> None:
+def test_pipeline_flowchart_first_ignores_non_flowchart_content() -> None:
     pipeline = SessionPipeline(_settings())
     state = SessionState(
-        session_id="org-session",
+        session_id="flowchart-first",
         mode=SessionMode.VISUALIZING,
     )
 
-    first_events = _run(
+    events = _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="Alice reports to Bob in the organization chart.",
-        ),
+        "Alice reports to Bob in the organization chart.",
     )
 
-    assert any(isinstance(event, DiagramReplaceEvent) for event in first_events)
-    assert state.locked_diagram_type == DiagramType.ORGCHART
-    previous_version = state.diagram.version
-
-    off_topic_events = _run(
-        pipeline,
-        state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="Let's take a quick break before lunch.",
-        ),
-    )
-
-    assert [type(event) for event in off_topic_events] == [TranscriptUpdateEvent]
-    assert state.diagram.version == previous_version
-    assert state.last_processed_offset == len(state.committed_transcript)
+    assert [type(event) for event in events] == [
+        TranscriptUpdateEvent,
+        IntentResultEvent,
+    ]
+    assert state.diagram.version == 0
+    assert state.last_generated_offset == len(state.committed_transcript)
 
 
 def test_pipeline_reset_clears_scope_and_offsets() -> None:
@@ -415,9 +419,10 @@ def test_pipeline_reset_clears_scope_and_offsets() -> None:
     assert state.committed_utterances == []
     assert state.accepted_utterances == []
     assert state.last_generated_offset == 0
+    assert state.last_generated_utterance_index == 0
     assert state.last_processed_offset == 0
     assert state.switch_streak == 0
-    assert state.last_request_id == 0
+    assert state.last_request_id == 8
     assert state.last_applied_version == 0
 
 
@@ -425,13 +430,10 @@ def test_pipeline_falls_back_to_replace_when_patch_base_version_is_stale(monkeyp
     pipeline = SessionPipeline(_settings())
     state = SessionState(session_id="stale", mode=SessionMode.VISUALIZING)
 
-    _run(
+    _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="First sales hands off the deal to solutions engineering.",
-        ),
+        "First sales hands off the deal to solutions engineering.",
     )
 
     original_build_patch = pipeline._build_patch
@@ -452,13 +454,10 @@ def test_pipeline_falls_back_to_replace_when_patch_base_version_is_stale(monkeyp
 
     monkeypatch.setattr(pipeline, "_build_patch", _stale_patch)
 
-    events = _run(
+    events = _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="Then security reviews the integration requirements.",
-        ),
+        "Then security reviews the integration requirements.",
     )
 
     assert [type(event) for event in events] == [
@@ -472,28 +471,22 @@ def test_pipeline_correction_rebuilds_from_committed_finals_only() -> None:
     pipeline = SessionPipeline(_settings())
     state = SessionState(session_id="correction", mode=SessionMode.VISUALIZING)
 
-    _run(
+    _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="First sales hands off the deal to solutions engineering.",
-        ),
+        "First sales hands off the deal to solutions engineering.",
     )
 
-    events = _run(
+    events = _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="Actually legal approves the MSA first.",
-        ),
+        "Actually legal approves the MSA first.",
     )
 
     assert [type(event) for event in events] == [
         TranscriptUpdateEvent,
         IntentResultEvent,
-        DiagramPatchEvent,
+        DiagramReplaceEvent,
     ]
     assert len(state.diagram.nodes) == 1
     assert state.diagram.nodes[0].data.label == "Legal approves the MSA first"
@@ -506,30 +499,21 @@ def test_pipeline_flowchart_correction_with_ai_rebuilds_from_committed_history()
     pipeline.model_orchestrator = _CanonicalFlowchartModelOrchestrator()
     state = SessionState(session_id="ai-correction", mode=SessionMode.VISUALIZING)
 
-    _run(
+    _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="First sales hands off the deal to solutions engineering.",
-        ),
+        "First sales hands off the deal to solutions engineering.",
     )
-    _run(
+    _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="Then security reviews the integration requirements.",
-        ),
+        "Then security reviews the integration requirements.",
     )
 
-    events = _run(
+    events = _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="Actually legal approves the MSA.",
-        ),
+        "Actually legal approves the MSA.",
     )
 
     assert [type(event) for event in events] == [
@@ -552,22 +536,16 @@ def test_pipeline_patch_payload_uses_positioned_server_node() -> None:
     pipeline = SessionPipeline(_settings())
     state = SessionState(session_id="positioned-patch", mode=SessionMode.VISUALIZING)
 
-    _run(
+    _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="First sales hands off the deal to solutions engineering.",
-        ),
+        "First sales hands off the deal to solutions engineering.",
     )
 
-    events = _run(
+    events = _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="Then security reviews the integration requirements.",
-        ),
+        "Then security reviews the integration requirements.",
     )
 
     patch_event = next(
@@ -598,16 +576,13 @@ def test_pipeline_consumes_ignored_out_of_scope_delta() -> None:
     )
 
     assert [type(event) for event in first_events] == [TranscriptUpdateEvent]
+    assert state.last_generated_offset == 0
+
+    pause_events = _flush(pipeline, state)
+
+    assert [type(event) for event in pause_events] == [IntentResultEvent]
     assert state.last_generated_offset == len(state.committed_transcript)
-
-    pause_events = _run(
-        pipeline,
-        state,
-        UICommandEvent(type="ui.command", command="pause.detected", payload={}),
-    )
-
-    assert pause_events == []
-    assert state.telemetry.trigger_counts == {"final_transcript": 1}
+    assert state.telemetry.trigger_counts == {"pause.detected": 1}
 
 
 def test_pipeline_treats_connector_only_final_as_ignorable() -> None:
@@ -629,41 +604,35 @@ def test_pipeline_treats_connector_only_final_as_ignorable() -> None:
 
     assert [type(event) for event in events] == [TranscriptUpdateEvent]
     assert state.diagram.version == 0
+    assert state.last_generated_offset == 0
+
+    pause_events = _flush(pipeline, state)
+
+    assert [type(event) for event in pause_events] == [IntentResultEvent]
     assert state.last_generated_offset == len(state.committed_transcript)
-
-    pause_events = _run(
-        pipeline,
-        state,
-        UICommandEvent(type="ui.command", command="pause.detected", payload={}),
-    )
-
-    assert pause_events == []
 
 
 def test_pipeline_flowchart_rules_only_filters_meta_chatter_from_boxes() -> None:
     pipeline = SessionPipeline(_settings())
     state = SessionState(session_id="rules-filter", mode=SessionMode.VISUALIZING)
 
-    _run(
+    _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="First sales hands off the deal to solutions engineering.",
-        ),
+        "First sales hands off the deal to solutions engineering.",
     )
     previous_version = state.diagram.version
 
-    events = _run(
+    events = _speak_and_flush(
         pipeline,
         state,
-        SpeechFinalEvent(
-            type="speech.final",
-            text="Okay that kind of works. What's going to happen next is I'll send the recap.",
-        ),
+        "Okay that kind of works. What's going to happen next is I'll send the recap.",
     )
 
-    assert [type(event) for event in events] == [TranscriptUpdateEvent]
+    assert [type(event) for event in events] == [
+        TranscriptUpdateEvent,
+        IntentResultEvent,
+    ]
     assert state.diagram.version == previous_version
     assert [node.data.label for node in state.diagram.nodes] == [
         "Sales hands off the deal to solutions engineering"
@@ -678,27 +647,100 @@ def test_pipeline_flowchart_ai_filters_meta_chatter_without_patching() -> None:
     pipeline.model_orchestrator = _CanonicalFlowchartModelOrchestrator()
     state = SessionState(session_id="ai-filter", mode=SessionMode.VISUALIZING)
 
-    _run(
+    _speak_and_flush(
         pipeline,
+        state,
+        "First sales hands off the deal to solutions engineering.",
+    )
+    previous_version = state.diagram.version
+
+    events = _speak_and_flush(
+        pipeline,
+        state,
+        "Okay that kind of works. What's going to happen next is I'll send the recap.",
+    )
+
+    assert [type(event) for event in events] == [
+        TranscriptUpdateEvent,
+        IntentResultEvent,
+    ]
+    assert state.diagram.version == previous_version
+    assert state.accepted_utterances == [
+        "Sales hands off the deal to solutions engineering"
+    ]
+
+
+def test_pipeline_batches_multiple_finals_until_pause() -> None:
+    pipeline = SessionPipeline(_settings())
+    pipeline.model_orchestrator = _CanonicalFlowchartModelOrchestrator()
+    state = SessionState(session_id="pause-batch", mode=SessionMode.VISUALIZING)
+
+    first_events = _run(
+        pipeline,
+        state,
+        SpeechFinalEvent(type="speech.final", text="First sales hands off the deal."),
+    )
+    second_events = _run(
+        pipeline,
+        state,
+        SpeechFinalEvent(type="speech.final", text="Then security reviews the requirements."),
+    )
+    pause_events = _flush(pipeline, state)
+
+    assert [type(event) for event in first_events] == [TranscriptUpdateEvent]
+    assert [type(event) for event in second_events] == [TranscriptUpdateEvent]
+    assert [type(event) for event in pause_events] == [
+        IntentResultEvent,
+        DiagramReplaceEvent,
+    ]
+    assert [node.data.label for node in state.diagram.nodes] == [
+        "Sales hands off the deal to solutions engineering",
+        "Security reviews the integration requirements",
+    ]
+
+
+def test_pipeline_discards_stale_generation_when_newer_pause_request_exists() -> None:
+    pipeline = SessionPipeline(_settings())
+    pipeline.model_orchestrator = _DelayedCanonicalFlowchartModelOrchestrator()
+    state = SessionState(session_id="stale-request", mode=SessionMode.VISUALIZING)
+
+    first_final = pipeline.prepare_event(
         state,
         SpeechFinalEvent(
             type="speech.final",
             text="First sales hands off the deal to solutions engineering.",
         ),
     )
-    previous_version = state.diagram.version
+    assert [type(event) for event in first_final.outbound_events] == [TranscriptUpdateEvent]
+    first_request = pipeline.prepare_event(
+        state,
+        UICommandEvent(type="ui.command", command="pause.detected", payload={}),
+    ).generation_request
+    assert first_request is not None
 
-    events = _run(
-        pipeline,
+    second_final = pipeline.prepare_event(
         state,
         SpeechFinalEvent(
             type="speech.final",
-            text="Okay that kind of works. What's going to happen next is I'll send the recap.",
+            text="Then security reviews the integration requirements.",
         ),
     )
+    assert [type(event) for event in second_final.outbound_events] == [TranscriptUpdateEvent]
+    second_request = pipeline.prepare_event(
+        state,
+        UICommandEvent(type="ui.command", command="pause.detected", payload={}),
+    ).generation_request
+    assert second_request is not None
+    assert second_request.request_id > first_request.request_id
 
-    assert [type(event) for event in events] == [TranscriptUpdateEvent]
-    assert state.diagram.version == previous_version
-    assert state.accepted_utterances == [
-        "Sales hands off the deal to solutions engineering"
+    first_execution = asyncio.run(pipeline.run_generation(first_request))
+    assert pipeline.apply_generation_result(state, first_execution) == []
+    assert state.diagram.version == 0
+
+    second_execution = asyncio.run(pipeline.run_generation(second_request))
+    second_outbound = pipeline.apply_generation_result(state, second_execution)
+    assert [type(event) for event in second_outbound] == [
+        IntentResultEvent,
+        DiagramReplaceEvent,
     ]
+    assert len(state.diagram.nodes) == 2

@@ -11,7 +11,7 @@ from app.schemas.events import (
     UICommandEvent,
     parse_inbound_event,
 )
-from app.services.pipeline import SessionPipeline
+from app.services.pipeline import GenerationRequest, PreparedEvent, SessionPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,9 @@ def _summarize_outbound_payload(payload: dict) -> str:
         result = payload.get("result", {})
         return (
             f"intent.result diagram_type={result.get('diagram_type')} "
-            f"action={result.get('action')} confidence={result.get('confidence')}"
+            f"action={result.get('action')} confidence={result.get('confidence')} "
+            f"scope={result.get('scope_relation')} source={result.get('source')} "
+            f"trigger={result.get('trigger_reason')} latency_ms={result.get('latency_ms')}"
         )
     if payload_type == "diagram.replace":
         diagram = payload.get("diagram", {})
@@ -87,9 +89,85 @@ async def _send_outbound_events(
     for event in outbound_events:
         payload = event.model_dump(mode="json")
         logger.info("[%s] ws.send %s", session_id, _summarize_outbound_payload(payload))
-        await websocket.send_json(payload)
+        await session_manager.send_json(websocket, payload)
         if payload.get("type") in SESSION_BROADCAST_TYPES:
             await session_manager.broadcast(session_id, payload, exclude=websocket)
+
+
+def _track_task(tasks: set[asyncio.Task], task: asyncio.Task) -> None:
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+
+
+async def _execute_generation_request(
+    session_id: str,
+    websocket: WebSocket,
+    session_manager: "SessionManager",
+    pipeline: "SessionPipeline",
+    request: GenerationRequest,
+) -> None:
+    try:
+        execution = await pipeline.run_generation(request)
+        async with session_manager.session_lock(session_id):
+            state = await session_manager.get_or_create(session_id=session_id)
+            outbound_events = pipeline.apply_generation_result(state, execution)
+        if not outbound_events:
+            logger.info(
+                "[%s] ws.noop generation request_id=%d",
+                session_id,
+                request.request_id,
+            )
+            return
+        await _send_outbound_events(
+            session_id=session_id,
+            websocket=websocket,
+            session_manager=session_manager,
+            outbound_events=outbound_events,
+        )
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        logger.exception(
+            "Pipeline generation error for session %s request %d",
+            session_id,
+            request.request_id,
+        )
+        try:
+            await session_manager.send_json(
+                websocket,
+                ErrorEvent(message="Internal error").model_dump(mode="json"),
+            )
+        except Exception:
+            pass
+
+
+async def _dispatch_prepared_event(
+    session_id: str,
+    websocket: WebSocket,
+    session_manager: "SessionManager",
+    pipeline: "SessionPipeline",
+    prepared: PreparedEvent,
+    generation_tasks: set[asyncio.Task],
+) -> None:
+    if prepared.outbound_events:
+        await _send_outbound_events(
+            session_id=session_id,
+            websocket=websocket,
+            session_manager=session_manager,
+            outbound_events=prepared.outbound_events,
+        )
+
+    if prepared.generation_request:
+        task = asyncio.create_task(
+            _execute_generation_request(
+                session_id,
+                websocket,
+                session_manager,
+                pipeline,
+                prepared.generation_request,
+            )
+        )
+        _track_task(generation_tasks, task)
 
 
 async def _pause_watcher(
@@ -97,6 +175,7 @@ async def _pause_watcher(
     websocket: WebSocket,
     session_manager: "SessionManager",
     pipeline: "SessionPipeline",
+    generation_tasks: set[asyncio.Task],
 ) -> None:
     """
     Background task: polls every 250 ms and synthesizes a `pause.detected`
@@ -112,15 +191,17 @@ async def _pause_watcher(
         try:
             async with session_manager.session_lock(session_id):
                 state = await session_manager.get_or_create(session_id=session_id)
-                unread = pipeline.transcript_buffer.unread_text(state)
+                unread = pipeline.transcript_buffer.pending_delta(state)
                 if not pipeline.trigger_engine.check_pause(state, unread):
                     continue
-                outbound_events = await pipeline.handle_event(state=state, event=synthetic)
-            await _send_outbound_events(
+                prepared = pipeline.prepare_event(state=state, event=synthetic)
+            await _dispatch_prepared_event(
                 session_id=session_id,
                 websocket=websocket,
                 session_manager=session_manager,
-                outbound_events=outbound_events,
+                pipeline=pipeline,
+                prepared=prepared,
+                generation_tasks=generation_tasks,
             )
         except asyncio.CancelledError:
             return
@@ -135,6 +216,7 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
 
     session_manager: SessionManager = websocket.app.state.session_manager
     pipeline: SessionPipeline = websocket.app.state.pipeline
+    generation_tasks: set[asyncio.Task] = set()
 
     state = await session_manager.connect(session_id=session_id)
     session_manager.register_ws(session_id, websocket)
@@ -146,13 +228,14 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
         state.diagram.version,
         state.connections,
     )
-    await websocket.send_json(
+    await session_manager.send_json(
+        websocket,
         StatusEvent(
             session_id=state.session_id,
             mode=state.mode,
             message="connected",
             diagram_type=state.diagram_type,
-        ).model_dump(mode="json")
+        ).model_dump(mode="json"),
     )
     if state.diagram.nodes:
         logger.info(
@@ -161,13 +244,20 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
             state.diagram.version,
             len(state.diagram.nodes),
         )
-        await websocket.send_json(
-            DiagramReplaceEvent(diagram=state.diagram).model_dump(mode="json")
+        await session_manager.send_json(
+            websocket,
+            DiagramReplaceEvent(diagram=state.diagram).model_dump(mode="json"),
         )
 
     # Start the background pause-detection watcher concurrently
     pause_task = asyncio.create_task(
-        _pause_watcher(session_id, websocket, session_manager, pipeline)
+        _pause_watcher(
+            session_id,
+            websocket,
+            session_manager,
+            pipeline,
+            generation_tasks,
+        )
     )
 
     try:
@@ -192,8 +282,9 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
                     exc,
                     payload,
                 )
-                await websocket.send_json(
-                    ErrorEvent(message=f"unknown or malformed event: {exc}").model_dump(mode="json")
+                await session_manager.send_json(
+                    websocket,
+                    ErrorEvent(message=f"unknown or malformed event: {exc}").model_dump(mode="json"),
                 )
                 continue
             logger.info("[%s] ws.recv %s", session_id, _summarize_inbound_event(event))
@@ -202,26 +293,33 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
             try:
                 async with session_manager.session_lock(session_id):
                     state = await session_manager.get_or_create(session_id=session_id)
-                    outbound_events = await pipeline.handle_event(state=state, event=event)
-                if not outbound_events:
+                    prepared = pipeline.prepare_event(state=state, event=event)
+                if not prepared.outbound_events and not prepared.generation_request:
                     logger.info("[%s] ws.noop no outbound events", session_id)
-                await _send_outbound_events(
+                await _dispatch_prepared_event(
                     session_id=session_id,
                     websocket=websocket,
                     session_manager=session_manager,
-                    outbound_events=outbound_events,
+                    pipeline=pipeline,
+                    prepared=prepared,
+                    generation_tasks=generation_tasks,
                 )
-            except Exception as exc:
+            except Exception:
                 logger.exception("Pipeline error for session %s", session_id)
                 try:
-                    await websocket.send_json(
-                        ErrorEvent(message="Internal error").model_dump(mode="json")
+                    await session_manager.send_json(
+                        websocket,
+                        ErrorEvent(message="Internal error").model_dump(mode="json"),
                     )
                 except Exception:
                     pass
     finally:
         pause_task.cancel()
+        pending_generation_tasks = tuple(generation_tasks)
+        for task in pending_generation_tasks:
+            task.cancel()
         await asyncio.gather(pause_task, return_exceptions=True)
+        await asyncio.gather(*pending_generation_tasks, return_exceptions=True)
         session_manager.unregister_ws(session_id, websocket)
         await session_manager.disconnect(session_id=session_id)
         logger.info("[%s] ws.closed", session_id)

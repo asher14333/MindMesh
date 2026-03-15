@@ -2,7 +2,12 @@ import re
 from typing import Optional
 
 from app.schemas.diagram import DiagramType
-from app.schemas.intent import IntentAction, IntentResult, ScopeRelation
+from app.schemas.intent import (
+    IntentAction,
+    IntentResult,
+    IntentSource,
+    ScopeRelation,
+)
 from app.state.session_state import SessionState
 
 
@@ -232,6 +237,86 @@ class IntentClassifier:
                     state.switch_streak = 0
         elif intent.scope_relation == ScopeRelation.IN_SCOPE:
             state.switch_streak = 0
+
+    def classify_flowchart_fallback(
+        self,
+        text: str,
+        *,
+        has_candidate_steps: bool,
+        trigger_reason: Optional[str] = None,
+        latency_ms: Optional[int] = None,
+    ) -> IntentResult:
+        normalized = re.sub(r"\s+", " ", text.lower()).strip()
+        is_correction = any(
+            re.search(pattern, normalized) for pattern in self.CORRECTION_PATTERNS
+        )
+
+        if not normalized or self._is_filler(normalized):
+            return IntentResult(
+                diagram_type=DiagramType.NONE,
+                confidence=0.0,
+                action=IntentAction.NOOP,
+                reason="empty_or_filler",
+                scope_relation=ScopeRelation.OUT_OF_SCOPE,
+                source=IntentSource.RULES_FALLBACK,
+                trigger_reason=trigger_reason,
+                latency_ms=latency_ms,
+            )
+
+        if self._is_meta_or_question(normalized):
+            return IntentResult(
+                diagram_type=DiagramType.NONE,
+                confidence=0.2,
+                action=IntentAction.NOOP,
+                reason="meta_or_question",
+                scope_relation=ScopeRelation.OUT_OF_SCOPE,
+                source=IntentSource.RULES_FALLBACK,
+                trigger_reason=trigger_reason,
+                latency_ms=latency_ms,
+            )
+
+        generic = self.classify(text)
+        if (
+            generic.action != IntentAction.NOOP
+            and generic.diagram_type not in {DiagramType.FLOWCHART, DiagramType.NONE}
+        ):
+            return IntentResult(
+                diagram_type=DiagramType.NONE,
+                confidence=generic.confidence,
+                action=IntentAction.NOOP,
+                reason="non_flowchart_content",
+                scope_relation=ScopeRelation.OUT_OF_SCOPE,
+                source=IntentSource.RULES_FALLBACK,
+                trigger_reason=trigger_reason,
+                latency_ms=latency_ms,
+            )
+
+        if not has_candidate_steps:
+            return IntentResult(
+                diagram_type=DiagramType.NONE,
+                confidence=0.35,
+                action=IntentAction.NOOP,
+                reason="rules_no_relevant_flow_steps",
+                scope_relation=ScopeRelation.OUT_OF_SCOPE,
+                source=IntentSource.RULES_FALLBACK,
+                trigger_reason=trigger_reason,
+                latency_ms=latency_ms,
+            )
+
+        return IntentResult(
+            diagram_type=DiagramType.FLOWCHART,
+            confidence=0.58 if is_correction else 0.7,
+            action=IntentAction.REPLACE if is_correction else IntentAction.UPDATE,
+            reason="rules_flowchart_fallback",
+            scope_relation=(
+                ScopeRelation.CORRECTION
+                if is_correction
+                else ScopeRelation.IN_SCOPE
+            ),
+            source=IntentSource.RULES_FALLBACK,
+            trigger_reason=trigger_reason,
+            latency_ms=latency_ms,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers

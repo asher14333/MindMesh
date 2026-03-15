@@ -33,6 +33,7 @@ class SessionState(BaseModel):
     committed_utterances: list[str] = Field(default_factory=list)
     accepted_utterances: list[str] = Field(default_factory=list)
     last_generated_offset: int = 0
+    last_generated_utterance_index: int = 0
     last_chunk_at: float = 0.0
     last_generation_at: float = 0.0
     cooldown_until: float = 0.0

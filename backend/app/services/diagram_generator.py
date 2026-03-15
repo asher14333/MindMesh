@@ -236,8 +236,16 @@ class DiagramGenerator:
     def accept_flowchart_delta(
         self, current: list[str], transcript_delta: str
     ) -> list[str]:
+        return self.accept_flowchart_utterances(
+            current,
+            self._utterances_from_transcript(transcript_delta),
+        )
+
+    def accept_flowchart_utterances(
+        self, current: list[str], utterances: list[str]
+    ) -> list[str]:
         accepted = list(current)
-        for utterance in self._utterances_from_transcript(transcript_delta):
+        for utterance in utterances:
             if not self._is_relevant_flow_utterance(utterance):
                 continue
 

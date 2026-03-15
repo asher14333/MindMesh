@@ -1,9 +1,10 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:is(.mindmesh-dark-disabled *));
 
 :root {
+  color-scheme: light;
   --background: #F8FAFC;
   --foreground: #020617;
   --card: #FFFFFF;
@@ -39,7 +40,7 @@
   --sidebar-ring: #0369A1;
 }
 
-.dark {
+.mindmesh-dark-disabled {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.145 0 0);
@@ -125,6 +126,7 @@
 }
 
 /* React Flow polish for server-driven diagrams */
+/* Keep canvas light regardless of theme so the diagram area is always readable */
 .mindmesh-canvas {
   --mindmesh-canvas-bg: #f8fafc;
   --mindmesh-grid-dot: rgba(100, 116, 139, 0.18);
@@ -133,7 +135,7 @@
   --mindmesh-edge-selected: #94a3b8;
 
   position: relative;
-  background-color: var(--mindmesh-canvas-bg);
+  background-color: var(--mindmesh-canvas-bg) !important;
 
   /* sandbox tiled canvas feel */
   background-image:
@@ -142,8 +144,11 @@
   background-size: 32px 32px;
 }
 
-.mindmesh-canvas .react-flow {
-  background: transparent;
+/* Force React Flow and its viewport/renderer to be transparent so our canvas bg shows */
+.mindmesh-canvas .react-flow,
+.mindmesh-canvas .react-flow__viewport,
+.mindmesh-canvas .react-flow__renderer {
+  background: transparent !important;
 }
 
 .mindmesh-canvas::before {

@@ -24,6 +24,7 @@ function DevDebugPanel({
   onRunDemoScript: () => void
 }) {
   const last = state.recentEvents[state.recentEvents.length - 1]
+  const lastIntent = state.lastIntent?.result
   const isConnected = connectionState === "open"
 
   return (
@@ -37,6 +38,14 @@ function DevDebugPanel({
         <div>diagram: {state.diagramType}</div>
         <div>desynced: {String(state.desynced)}</div>
         <div>last: {last?.summary ?? "none"}</div>
+        {lastIntent ? (
+          <>
+            <div>intent source: {lastIntent.source}</div>
+            <div>intent scope: {lastIntent.scope_relation}</div>
+            <div>intent trigger: {lastIntent.trigger_reason ?? "n/a"}</div>
+            <div>intent latency: {lastIntent.latency_ms ?? 0} ms</div>
+          </>
+        ) : null}
         {state.lastError ? (
           <div className="font-medium text-red-600">error: {state.lastError.message}</div>
         ) : null}

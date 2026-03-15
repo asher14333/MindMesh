@@ -14,6 +14,7 @@ class SessionManager:
         self._locks: dict[str, asyncio.Lock] = {}
         # session_id → set of active WebSocket connections
         self._connections: dict[str, set[Any]] = {}
+        self._send_locks: dict[Any, asyncio.Lock] = {}
 
     async def get_or_create(
         self, session_id: str, meeting_title: Optional[str] = None
@@ -36,10 +37,17 @@ class SessionManager:
     def register_ws(self, session_id: str, ws: Any) -> None:
         """Register a WebSocket connection so it receives broadcast events."""
         self._connections.setdefault(session_id, set()).add(ws)
+        self._send_locks.setdefault(ws, asyncio.Lock())
 
     def unregister_ws(self, session_id: str, ws: Any) -> None:
         """Remove a WebSocket connection from the broadcast registry."""
         self._connections.get(session_id, set()).discard(ws)
+        self._send_locks.pop(ws, None)
+
+    async def send_json(self, ws: Any, payload: dict) -> None:
+        lock = self._send_locks.setdefault(ws, asyncio.Lock())
+        async with lock:
+            await ws.send_json(payload)
 
     async def broadcast(self, session_id: str, payload: dict, exclude: Any = None) -> None:
         """Send payload to every registered WebSocket for this session except `exclude`."""
@@ -47,7 +55,7 @@ class SessionManager:
             if ws is exclude:
                 continue
             try:
-                await ws.send_json(payload)
+                await self.send_json(ws, payload)
             except Exception:
                 pass  # connection already closed — will be cleaned up on disconnect
 

@@ -46,13 +46,26 @@ def test_session_broadcasts_diagram_events_to_other_clients() -> None:
                 }
             )
 
-            assert _receive_types(sender, 3) == [
+            assert _receive_types(sender, 1) == [
                 "transcript.update",
+            ]
+            assert _receive_types(listener, 1) == [
+                "transcript.update",
+            ]
+
+            sender.send_json(
+                {
+                    "type": "ui.command",
+                    "command": "visualize.generate",
+                    "payload": {},
+                }
+            )
+
+            assert _receive_types(sender, 2) == [
                 "intent.result",
                 "diagram.replace",
             ]
-            assert _receive_types(listener, 3) == [
-                "transcript.update",
+            assert _receive_types(listener, 2) == [
                 "intent.result",
                 "diagram.replace",
             ]
@@ -65,13 +78,26 @@ def test_session_broadcasts_diagram_events_to_other_clients() -> None:
                 }
             )
 
-            assert _receive_types(sender, 3) == [
+            assert _receive_types(sender, 1) == [
                 "transcript.update",
+            ]
+            assert _receive_types(listener, 1) == [
+                "transcript.update",
+            ]
+
+            sender.send_json(
+                {
+                    "type": "ui.command",
+                    "command": "visualize.generate",
+                    "payload": {},
+                }
+            )
+
+            assert _receive_types(sender, 2) == [
                 "intent.result",
                 "diagram.patch",
             ]
-            assert _receive_types(listener, 3) == [
-                "transcript.update",
+            assert _receive_types(listener, 2) == [
                 "intent.result",
                 "diagram.patch",
             ]
@@ -107,9 +133,21 @@ def test_late_joiner_receives_current_diagram_before_future_patches() -> None:
                 }
             )
 
-            replace_events = [sender.receive_json() for _ in range(3)]
+            replace_events = [sender.receive_json()]
             assert [event["type"] for event in replace_events] == [
                 "transcript.update",
+            ]
+
+            sender.send_json(
+                {
+                    "type": "ui.command",
+                    "command": "visualize.generate",
+                    "payload": {},
+                }
+            )
+
+            replace_events = [sender.receive_json() for _ in range(2)]
+            assert [event["type"] for event in replace_events] == [
                 "intent.result",
                 "diagram.replace",
             ]
@@ -132,13 +170,26 @@ def test_late_joiner_receives_current_diagram_before_future_patches() -> None:
                     }
                 )
 
-                assert _receive_types(sender, 3) == [
+                assert _receive_types(sender, 1) == [
                     "transcript.update",
+                ]
+                assert _receive_types(late_joiner, 1) == [
+                    "transcript.update",
+                ]
+
+                sender.send_json(
+                    {
+                        "type": "ui.command",
+                        "command": "visualize.generate",
+                        "payload": {},
+                    }
+                )
+
+                assert _receive_types(sender, 2) == [
                     "intent.result",
                     "diagram.patch",
                 ]
-                assert _receive_types(late_joiner, 3) == [
-                    "transcript.update",
+                assert _receive_types(late_joiner, 2) == [
                     "intent.result",
                     "diagram.patch",
                 ]

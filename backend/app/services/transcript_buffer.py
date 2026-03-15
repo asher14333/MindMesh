@@ -1,4 +1,5 @@
 import time
+from typing import Optional
 
 from app.state.session_state import SessionState
 
@@ -30,9 +31,25 @@ class TranscriptBuffer:
     def unread_text(self, state: SessionState) -> str:
         return state.committed_transcript[state.last_generated_offset :].strip()
 
+    def unread_utterances(self, state: SessionState) -> list[str]:
+        return state.committed_utterances[state.last_generated_utterance_index :]
+
     def pending_delta(self, state: SessionState) -> str:
         return state.committed_transcript[state.last_processed_offset :].strip()
 
-    def mark_generated(self, state: SessionState) -> None:
-        state.last_generated_offset = len(state.committed_transcript)
+    def mark_generated(
+        self,
+        state: SessionState,
+        *,
+        offset: Optional[int] = None,
+        utterance_index: Optional[int] = None,
+    ) -> None:
+        state.last_generated_offset = (
+            len(state.committed_transcript) if offset is None else offset
+        )
+        state.last_generated_utterance_index = (
+            len(state.committed_utterances)
+            if utterance_index is None
+            else utterance_index
+        )
         state.last_generation_at = time.monotonic()

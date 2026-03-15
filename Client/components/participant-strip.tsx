@@ -40,7 +40,7 @@ function PeerTile({
 
   return (
     <div
-      className={`relative h-24 w-36 overflow-hidden rounded-xl bg-slate-800 ${
+      className={`relative h-36 w-52 overflow-hidden rounded-xl bg-slate-800 md:h-40 md:w-60 ${
         speaking
           ? "ring-2 ring-accent ring-offset-2 ring-offset-muted/30"
           : "ring-1 ring-border/40"
@@ -61,7 +61,7 @@ function PeerTile({
         </div>
       )}
       <div className="absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-black/60 to-transparent" />
-      <span className="absolute bottom-1 left-2 text-[10px] font-medium text-white/90">{name}</span>
+      <span className="absolute bottom-1.5 left-2 text-xs font-medium text-white/90">{name}</span>
     </div>
   )
 }
@@ -70,8 +70,8 @@ export default function ParticipantStrip() {
   const { localStream, remotePeers } = useWebRTCContext()
 
   return (
-    <div className="shrink-0 border-b border-border/40 bg-muted/30 px-4 py-3 md:px-6">
-      <div className="flex items-center justify-center gap-3 md:gap-4">
+    <div className="shrink-0 border-b border-border/40 bg-muted/30 px-4 py-4 md:px-6 md:py-5">
+      <div className="flex items-center justify-center gap-4 md:gap-6">
         <div className="relative flex flex-col items-center gap-1">
           <PeerTile stream={localStream} name="You" isLocal />
         </div>

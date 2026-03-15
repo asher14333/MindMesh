@@ -4,7 +4,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.config import Settings
-from app.schemas.events import SpeechFinalEvent, UICommandEvent
+from app.schemas.events import UICommandEvent
 from app.state.session_state import SessionMode, SessionState
 
 
@@ -18,24 +18,39 @@ class TriggerEngine:
         self.settings = settings
 
     def should_generate(
-        self, state: SessionState, event: object, unprocessed_text: str
+        self, state: SessionState, event: object, unscheduled_text: str
     ) -> TriggerDecision:
         now = time.monotonic()
+        has_unscheduled_text = bool(unscheduled_text.strip())
 
         if isinstance(event, UICommandEvent):
-            if event.command in {"visualize.generate", "pause.detected"}:
-                return TriggerDecision(should_generate=bool(unprocessed_text), reason=event.command)
-            if event.command == "visualize.toggle" and state.mode == SessionMode.VISUALIZING:
-                return TriggerDecision(should_generate=bool(unprocessed_text), reason=event.command)
+            if event.command == "visualize.generate":
+                return TriggerDecision(
+                    should_generate=has_unscheduled_text,
+                    reason=event.command,
+                )
+            if event.command == "pause.detected":
+                return TriggerDecision(
+                    should_generate=(
+                        has_unscheduled_text
+                        and len(unscheduled_text) >= self.settings.min_new_chars
+                    ),
+                    reason=event.command,
+                )
+            if (
+                event.command == "visualize.toggle"
+                and state.mode == SessionMode.VISUALIZING
+            ):
+                return TriggerDecision(
+                    should_generate=has_unscheduled_text,
+                    reason=event.command,
+                )
 
         if state.mode != SessionMode.VISUALIZING:
             return TriggerDecision(should_generate=False)
 
-        if not unprocessed_text or now < state.cooldown_until:
+        if not has_unscheduled_text or now < state.cooldown_until:
             return TriggerDecision(should_generate=False)
-
-        if isinstance(event, SpeechFinalEvent):
-            return TriggerDecision(should_generate=True, reason="final_transcript")
 
         return TriggerDecision(should_generate=False)
 

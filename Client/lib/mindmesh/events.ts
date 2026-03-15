@@ -17,6 +17,17 @@ export type SessionMode = z.infer<typeof SessionModeSchema>
 export const IntentActionSchema = z.enum(["update", "replace", "noop"])
 export type IntentAction = z.infer<typeof IntentActionSchema>
 
+export const ScopeRelationSchema = z.enum([
+  "in_scope",
+  "out_of_scope",
+  "correction",
+  "switch_candidate",
+])
+export type ScopeRelation = z.infer<typeof ScopeRelationSchema>
+
+export const IntentSourceSchema = z.enum(["llm", "rules_fallback"])
+export type IntentSource = z.infer<typeof IntentSourceSchema>
+
 export const PositionSchema = z.object({
   x: z.number(),
   y: z.number(),
@@ -193,6 +204,10 @@ export const IntentResultSchema = z.object({
   confidence: z.number(),
   action: IntentActionSchema,
   reason: z.string().nullable().optional(),
+  scope_relation: ScopeRelationSchema.optional().default("in_scope"),
+  source: IntentSourceSchema.optional().default("rules_fallback"),
+  trigger_reason: z.string().nullable().optional(),
+  latency_ms: z.number().int().nonnegative().nullable().optional(),
 })
 export type IntentResult = z.infer<typeof IntentResultSchema>
 

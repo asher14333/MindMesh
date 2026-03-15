@@ -19,9 +19,17 @@ class ScopeRelation(str, Enum):
     SWITCH_CANDIDATE = "switch_candidate"
 
 
+class IntentSource(str, Enum):
+    LLM = "llm"
+    RULES_FALLBACK = "rules_fallback"
+
+
 class IntentResult(BaseModel):
     diagram_type: DiagramType
     confidence: float
     action: IntentAction
     reason: Optional[str] = None
     scope_relation: ScopeRelation = ScopeRelation.IN_SCOPE
+    source: IntentSource = IntentSource.RULES_FALLBACK
+    trigger_reason: Optional[str] = None
+    latency_ms: Optional[int] = None

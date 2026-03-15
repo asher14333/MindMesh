@@ -40,7 +40,12 @@ function summarizeServerEvent(event: ServerEvent): string {
     case "transcript.update":
       return `transcript.update final=${event.is_final} speaker=${event.speaker ?? "-"} len=${event.text.length}`
     case "intent.result":
-      return `intent.result diagram_type=${event.result.diagram_type} action=${event.result.action} confidence=${event.result.confidence.toFixed(2)}`
+      return (
+        `intent.result diagram_type=${event.result.diagram_type} action=${event.result.action} ` +
+        `scope=${event.result.scope_relation} source=${event.result.source} ` +
+        `trigger=${event.result.trigger_reason ?? "-"} latency_ms=${event.result.latency_ms ?? "-"} ` +
+        `confidence=${event.result.confidence.toFixed(2)}`
+      )
     case "diagram.replace":
       return `diagram.replace version=${event.diagram.version} nodes=${event.diagram.nodes.length} edges=${event.diagram.edges.length}`
     case "diagram.patch":
