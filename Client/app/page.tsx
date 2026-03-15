@@ -34,6 +34,12 @@ const MEETING_TITLE = "Enterprise Customer Onboarding Approval Flow"
 export default function MindMeshDemo() {
   const [mindMeshActive, setMindMeshActive] = useState(false)
   const [callEnded, setCallEnded] = useState(false)
+  const [displayName] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem("mm-display-name") || "You"
+    }
+    return "You"
+  })
 
   if (callEnded) {
     return (
@@ -50,7 +56,7 @@ export default function MindMeshDemo() {
   }
 
   return (
-    <WebRTCProvider roomId={ROOM_ID} userId="You">
+    <WebRTCProvider roomId={ROOM_ID} userId={displayName}>
       <MindMeshProvider
         sessionId={ROOM_ID}
         meetingTitle={MEETING_TITLE}

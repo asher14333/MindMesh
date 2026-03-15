@@ -3,12 +3,39 @@
 import { useEffect, useRef, useState } from "react"
 import { useWebRTCContext } from "@/hooks/webrtc-context"
 import type { RemotePeer } from "@/hooks/use-webrtc"
-import { Mic } from "lucide-react"
+import { Mic, VideoOff } from "lucide-react"
 
-/**
- * Renders a video element whose srcObject is kept in sync with the stream,
- * or falls back to an initial-letter avatar if no stream is available.
- */
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+/** Returns true when the stream has at least one live, enabled video track. */
+function hasActiveVideo(stream: MediaStream | null): boolean {
+  if (!stream) return false
+  return stream
+    .getVideoTracks()
+    .some((t) => t.enabled && t.readyState === "live")
+}
+
+/** Deterministic pastel-ish background colour based on name. */
+function avatarBg(name: string): string {
+  const palette = [
+    "bg-violet-500",
+    "bg-blue-500",
+    "bg-emerald-500",
+    "bg-orange-500",
+    "bg-rose-500",
+    "bg-cyan-500",
+    "bg-indigo-500",
+    "bg-teal-500",
+  ]
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return palette[Math.abs(hash) % palette.length]
+}
+
+// ─── Internal VideoTile ──────────────────────────────────────────────────────
+
 function VideoTile({
   stream,
   name,
@@ -17,6 +44,7 @@ function VideoTile({
   mirror = false,
   size = "small",
   isHost = false,
+  cameraActive = true,
   onClick,
 }: {
   stream?: MediaStream | null
@@ -26,6 +54,8 @@ function VideoTile({
   mirror?: boolean
   size?: "large" | "small"
   isHost?: boolean
+  /** Pass false to force the avatar placeholder even when stream exists. */
+  cameraActive?: boolean
   onClick?: () => void
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -49,34 +79,53 @@ function VideoTile({
     }
   }, [stream, isLocal])
 
+  const showVideo = !!stream && cameraActive
+
   return (
     <>
-      {stream ? (
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          className="h-full w-full object-cover"
-          style={mirror ? { transform: "scaleX(-1)" } : undefined}
-        />
-      ) : (
-        /* No stream — initial avatar placeholder */
-        <div className="flex h-full w-full items-center justify-center bg-neutral-100">
-          <span
-            className={`font-semibold text-neutral-400 select-none ${
-              size === "large" ? "text-6xl" : "text-xl"
+      {/* Video element — always rendered so audio keeps playing, hidden when camera off */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        className="h-full w-full object-cover"
+        style={{
+          display: showVideo ? "block" : "none",
+          ...(mirror ? { transform: "scaleX(-1)" } : {}),
+        }}
+      />
+
+      {/* Avatar placeholder — shown when camera is off or stream unavailable */}
+      {!showVideo && (
+        <div
+          className={`flex h-full w-full flex-col items-center justify-center gap-3 ${
+            size === "large" ? "bg-neutral-100" : "bg-neutral-100"
+          }`}
+        >
+          <div
+            className={`flex items-center justify-center rounded-full font-bold text-white select-none ${avatarBg(name)} ${
+              size === "large" ? "h-24 w-24 text-4xl" : "h-12 w-12 text-xl"
             }`}
           >
             {name.charAt(0).toUpperCase()}
-          </span>
+          </div>
+          {size === "large" && (
+            <div className="flex flex-col items-center gap-1">
+              <span className="text-sm font-semibold text-neutral-700">{name}</span>
+              <div className="flex items-center gap-1.5 text-neutral-400">
+                <VideoOff className="h-3.5 w-3.5" />
+                <span className="text-xs">Camera off</span>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {/* Bottom gradient overlay */}
-      {size === "large" && (
+      {size === "large" && showVideo && (
         <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/50 to-transparent" />
       )}
-      {size === "small" && (
+      {size === "small" && showVideo && (
         <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/40 to-transparent" />
       )}
 
@@ -102,7 +151,13 @@ function VideoTile({
               </svg>
             </span>
           )}
-          <span className="rounded-md bg-black/40 px-3 py-1.5 text-sm font-medium text-white backdrop-blur-sm">
+          <span
+            className={`rounded-md px-3 py-1.5 text-sm font-medium backdrop-blur-sm ${
+              showVideo
+                ? "bg-black/40 text-white"
+                : "bg-neutral-200/80 text-neutral-700"
+            }`}
+          >
             {name}
             {isHost ? " (Host)" : ""}
           </span>
@@ -115,8 +170,16 @@ function VideoTile({
         </div>
       ) : (
         <div className="absolute bottom-2 left-2.5 flex items-center gap-1.5">
-          <Mic className="h-3 w-3 text-white/80" />
-          <span className="text-[11px] font-medium text-white/90">{name}</span>
+          {showVideo ? (
+            <>
+              <Mic className="h-3 w-3 text-white/80" />
+              <span className="text-[11px] font-medium text-white/90">{name}</span>
+            </>
+          ) : (
+            <span className="rounded bg-black/30 px-1.5 py-0.5 text-[10px] font-medium text-white/80 backdrop-blur-sm">
+              {name}
+            </span>
+          )}
         </div>
       )}
 
@@ -138,8 +201,10 @@ function VideoTile({
   )
 }
 
+// ─── MeetingStage ────────────────────────────────────────────────────────────
+
 export default function MeetingStage() {
-  const { localStream, remotePeers, error } = useWebRTCContext()
+  const { localStream, remotePeers, isCameraOn, error } = useWebRTCContext()
   const [pinnedPeerId, setPinnedPeerId] = useState<string | null>(null)
 
   // Resolve pinned peer; fall back to first remote peer
@@ -182,6 +247,7 @@ export default function MeetingStage() {
               isSpeaking={false}
               size="large"
               mirror
+              cameraActive={isCameraOn}
             />
           ) : (
             <VideoTile
@@ -190,6 +256,7 @@ export default function MeetingStage() {
               isLocal={false}
               isSpeaking
               size="large"
+              cameraActive={hasActiveVideo(pinnedPeer!.stream)}
             />
           )}
         </div>
@@ -208,6 +275,7 @@ export default function MeetingStage() {
               name={peer.userId}
               isLocal={false}
               size="small"
+              cameraActive={hasActiveVideo(peer.stream)}
               onClick={() => setPinnedPeerId(peer.peerId)}
             />
           </div>
@@ -224,6 +292,7 @@ export default function MeetingStage() {
               isLocal
               size="small"
               mirror
+              cameraActive={isCameraOn}
             />
           </div>
         )}
