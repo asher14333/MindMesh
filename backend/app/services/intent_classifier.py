@@ -56,6 +56,15 @@ class IntentClassifier:
         r"^(um+|uh+|ah+|er+|hmm+|like|you know|so|okay|ok|right|"
         r"yeah|yes|no|mhm)[\s.,!?]*$",
     ]
+    CONNECTOR_ONLY_TERMS = {
+        "first",
+        "then",
+        "next",
+        "finally",
+        "after",
+        "before",
+        "once",
+    }
 
     # ------------------------------------------------------------------
     # Public API
@@ -219,4 +228,7 @@ class IntentClassifier:
         return score
 
     def _is_filler(self, text: str) -> bool:
-        return any(re.match(p, text, re.IGNORECASE) for p in self.FILLER_PATTERNS)
+        if any(re.match(p, text, re.IGNORECASE) for p in self.FILLER_PATTERNS):
+            return True
+        normalized = re.sub(r"[\s.,!?;:]+", " ", text.lower()).strip()
+        return normalized in self.CONNECTOR_ONLY_TERMS

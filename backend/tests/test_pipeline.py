@@ -11,6 +11,12 @@ from app.schemas.events import (
     TranscriptUpdateEvent,
     UICommandEvent,
 )
+from app.services.model_orchestrator import (
+    AIDecision,
+    AIFactNode,
+    AIFacts,
+    AIResponse,
+)
 from app.services.pipeline import SessionPipeline
 from app.state.session_state import SessionMode, SessionState
 
@@ -24,6 +30,67 @@ def _settings() -> Settings:
         generation_cooldown_seconds=0.0,
         min_new_chars=999,
     )
+
+
+def _ai_response_for_flowchart_delta(
+    label: str,
+    *,
+    action: str = "update",
+    scope_relation: str = "in_scope",
+    request_id: int = 0,
+) -> AIResponse:
+    key = label.lower().replace(" ", "_")
+    return AIResponse(
+        decision=AIDecision(
+            diagram_type="flowchart",
+            confidence=0.9,
+            scope_relation=scope_relation,
+            action=action,
+        ),
+        facts=AIFacts(
+            nodes=[AIFactNode(key=key, label=label, kind="step")],
+        ),
+        reason="delta_only_stub",
+        request_id=request_id,
+    )
+
+
+class _DeltaOnlyFlowchartModelOrchestrator:
+    def is_available(self) -> bool:
+        return True
+
+    async def generate(
+        self,
+        delta: str,
+        diagram_type: DiagramType,
+        graph_summary: str,
+        scope_summary: str,
+        request_id: int = 0,
+    ) -> AIResponse:
+        normalized = delta.lower()
+        if "sales hands off" in normalized:
+            return _ai_response_for_flowchart_delta(
+                "Sales hands off the deal to solutions engineering",
+                request_id=request_id,
+            )
+        if "security reviews" in normalized:
+            return _ai_response_for_flowchart_delta(
+                "Security reviews the integration requirements",
+                request_id=request_id,
+            )
+        if "legal approves" in normalized:
+            return _ai_response_for_flowchart_delta(
+                "Legal approves the MSA",
+                action="replace" if "actually" in normalized else "update",
+                scope_relation="correction" if "actually" in normalized else "in_scope",
+                request_id=request_id,
+            )
+        if "provisioning starts" in normalized:
+            return _ai_response_for_flowchart_delta(
+                "Provisioning starts and customer success is notified",
+                request_id=request_id,
+            )
+        return AIResponse(request_id=request_id)
 
 
 def test_pipeline_replaces_then_patches_for_flowchart_updates() -> None:
@@ -77,6 +144,88 @@ def test_pipeline_replaces_then_patches_for_flowchart_updates() -> None:
     assert state.locked_diagram_type == DiagramType.FLOWCHART
     assert state.diagram.version == 2
     assert len(state.diagram.nodes) == 2
+
+
+def test_pipeline_flowchart_ai_delta_only_updates_append_from_committed_history() -> None:
+    pipeline = SessionPipeline(_settings())
+    pipeline.model_orchestrator = _DeltaOnlyFlowchartModelOrchestrator()
+    state = SessionState(session_id="ai-flowchart", mode=SessionMode.VISUALIZING)
+
+    first_events = _run(
+        pipeline,
+        state,
+        SpeechFinalEvent(
+            type="speech.final",
+            text="First sales hands off the deal to solutions engineering.",
+        ),
+    )
+    assert [type(event) for event in first_events] == [
+        TranscriptUpdateEvent,
+        IntentResultEvent,
+        DiagramReplaceEvent,
+    ]
+    assert [node.data.label for node in state.diagram.nodes] == [
+        "Sales hands off the deal to solutions engineering"
+    ]
+
+    second_events = _run(
+        pipeline,
+        state,
+        SpeechFinalEvent(
+            type="speech.final",
+            text="Then security reviews the integration requirements.",
+        ),
+    )
+    assert [type(event) for event in second_events] == [
+        TranscriptUpdateEvent,
+        IntentResultEvent,
+        DiagramPatchEvent,
+    ]
+    assert [node.data.label for node in state.diagram.nodes] == [
+        "Sales hands off the deal to solutions engineering",
+        "Security reviews the integration requirements",
+    ]
+
+    third_events = _run(
+        pipeline,
+        state,
+        SpeechFinalEvent(
+            type="speech.final",
+            text="After security sign-off, legal approves the MSA.",
+        ),
+    )
+    assert [type(event) for event in third_events] == [
+        TranscriptUpdateEvent,
+        IntentResultEvent,
+        DiagramPatchEvent,
+    ]
+    assert [node.data.label for node in state.diagram.nodes] == [
+        "Sales hands off the deal to solutions engineering",
+        "Security reviews the integration requirements",
+        "Legal approves the MSA",
+    ]
+
+    fourth_events = _run(
+        pipeline,
+        state,
+        SpeechFinalEvent(
+            type="speech.final",
+            text="Finally provisioning starts and customer success is notified.",
+        ),
+    )
+    assert [type(event) for event in fourth_events] == [
+        TranscriptUpdateEvent,
+        IntentResultEvent,
+        DiagramPatchEvent,
+    ]
+    assert [node.data.label for node in state.diagram.nodes] == [
+        "Sales hands off the deal to solutions engineering",
+        "Security reviews the integration requirements",
+        "Legal approves the MSA",
+        "Provisioning starts and customer success is notified",
+    ]
+    assert state.diagram.version == 4
+    assert len(state.diagram.edges) == 3
 
 
 def test_pipeline_does_not_generate_or_broadcast_from_partials() -> None:
@@ -295,3 +444,138 @@ def test_pipeline_correction_rebuilds_from_committed_finals_only() -> None:
     assert len(state.diagram.nodes) == 1
     assert state.diagram.nodes[0].data.label == "Legal approves the MSA first"
     assert "Actually" not in state.diagram.nodes[0].data.label
+
+
+def test_pipeline_flowchart_correction_with_ai_rebuilds_from_committed_history() -> None:
+    pipeline = SessionPipeline(_settings())
+    pipeline.model_orchestrator = _DeltaOnlyFlowchartModelOrchestrator()
+    state = SessionState(session_id="ai-correction", mode=SessionMode.VISUALIZING)
+
+    _run(
+        pipeline,
+        state,
+        SpeechFinalEvent(
+            type="speech.final",
+            text="First sales hands off the deal to solutions engineering.",
+        ),
+    )
+    _run(
+        pipeline,
+        state,
+        SpeechFinalEvent(
+            type="speech.final",
+            text="Then security reviews the integration requirements.",
+        ),
+    )
+
+    events = _run(
+        pipeline,
+        state,
+        SpeechFinalEvent(
+            type="speech.final",
+            text="Actually legal approves the MSA.",
+        ),
+    )
+
+    assert [type(event) for event in events] == [
+        TranscriptUpdateEvent,
+        IntentResultEvent,
+        DiagramReplaceEvent,
+    ]
+    assert [node.data.label for node in state.diagram.nodes] == [
+        "Sales hands off the deal to solutions engineering",
+        "Legal approves the MSA",
+    ]
+    assert len(state.diagram.edges) == 1
+
+
+def test_pipeline_patch_payload_uses_positioned_server_node() -> None:
+    pipeline = SessionPipeline(_settings())
+    state = SessionState(session_id="positioned-patch", mode=SessionMode.VISUALIZING)
+
+    _run(
+        pipeline,
+        state,
+        SpeechFinalEvent(
+            type="speech.final",
+            text="First sales hands off the deal to solutions engineering.",
+        ),
+    )
+
+    events = _run(
+        pipeline,
+        state,
+        SpeechFinalEvent(
+            type="speech.final",
+            text="Then security reviews the integration requirements.",
+        ),
+    )
+
+    patch_event = next(
+        event for event in events if isinstance(event, DiagramPatchEvent)
+    )
+    add_node = next(op for op in patch_event.patch.ops if op.op == "add_node")
+    server_node = next(node for node in state.diagram.nodes if node.id == add_node.data["id"])
+
+    assert add_node.data["position"] == server_node.position.model_dump()
+    assert add_node.data["position"] != {"x": 0.0, "y": 0.0}
+
+
+def test_pipeline_consumes_ignored_out_of_scope_delta() -> None:
+    pipeline = SessionPipeline(_settings())
+    state = SessionState(
+        session_id="ignored-delta",
+        mode=SessionMode.VISUALIZING,
+        locked_diagram_type=DiagramType.FLOWCHART,
+    )
+
+    first_events = _run(
+        pipeline,
+        state,
+        SpeechFinalEvent(
+            type="speech.final",
+            text="Can someone send the Zoom link again?",
+        ),
+    )
+
+    assert [type(event) for event in first_events] == [TranscriptUpdateEvent]
+    assert state.last_generated_offset == len(state.committed_transcript)
+
+    pause_events = _run(
+        pipeline,
+        state,
+        UICommandEvent(type="ui.command", command="pause.detected", payload={}),
+    )
+
+    assert pause_events == []
+    assert state.telemetry.trigger_counts == {"final_transcript": 1}
+
+
+def test_pipeline_treats_connector_only_final_as_ignorable() -> None:
+    pipeline = SessionPipeline(_settings())
+    state = SessionState(
+        session_id="connector-only",
+        mode=SessionMode.VISUALIZING,
+        locked_diagram_type=DiagramType.FLOWCHART,
+    )
+
+    events = _run(
+        pipeline,
+        state,
+        SpeechFinalEvent(
+            type="speech.final",
+            text="Then",
+        ),
+    )
+
+    assert [type(event) for event in events] == [TranscriptUpdateEvent]
+    assert state.diagram.version == 0
+    assert state.last_generated_offset == len(state.committed_transcript)
+
+    pause_events = _run(
+        pipeline,
+        state,
+        UICommandEvent(type="ui.command", command="pause.detected", payload={}),
+    )
+
+    assert pause_events == []

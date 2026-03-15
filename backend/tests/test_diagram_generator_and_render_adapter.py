@@ -252,3 +252,44 @@ def test_render_adapter_apply_patch_assigns_position_and_removes_incident_edges(
     assert [node.id for node in updated.nodes] == ["n-b", "n-c"]
     assert updated.nodes[1].position != Position()
     assert [edge.id for edge in updated.edges] == ["e-b--c"]
+
+
+def test_render_adapter_rewrites_emitted_patch_with_final_node_positions() -> None:
+    adapter = RenderAdapter()
+    current = DiagramDocument(
+        diagram_id="d-render-emit",
+        diagram_type=DiagramType.FLOWCHART,
+        version=1,
+        nodes=[_node("n-a", "A")],
+    )
+    patch = DiagramPatch(
+        diagram_id="d-render-emit",
+        diagram_type=DiagramType.FLOWCHART,
+        base_version=1,
+        version=2,
+        layout_changed=True,
+        ops=[
+            PatchOp(
+                op="add_node",
+                data=DiagramNode(
+                    id="n-b",
+                    data=NodeData(label="B"),
+                ).model_dump(by_alias=True),
+            ),
+            PatchOp(
+                op="update_node",
+                data=DiagramNode(
+                    id="n-a",
+                    data=NodeData(label="A updated"),
+                ).model_dump(by_alias=True),
+            ),
+        ],
+    )
+
+    updated, emitted = adapter.apply_patch_with_emitted(current, patch)
+
+    add_node = next(op for op in emitted.ops if op.op == "add_node")
+    update_node = next(op for op in emitted.ops if op.op == "update_node")
+
+    assert add_node.data["position"] == updated.nodes[1].position.model_dump()
+    assert update_node.data["position"] == updated.nodes[0].position.model_dump()

@@ -148,8 +148,10 @@ class SessionPipeline:
         state.last_processed_offset = len(state.committed_transcript)
 
         if intent.scope_relation == ScopeRelation.OUT_OF_SCOPE:
+            self._consume_ignored_delta(state)
             return outbound
         if intent.action == IntentAction.NOOP and intent.confidence < 0.65:
+            self._consume_ignored_delta(state)
             return outbound
 
         self.intent_classifier.update_scope_lock(state, intent)
@@ -157,7 +159,7 @@ class SessionPipeline:
         logger.info("[%s] intent=%s confidence=%.2f", state.session_id, intent.diagram_type, intent.confidence)
 
         if intent.action == IntentAction.NOOP:
-            self.trigger_engine.arm_cooldown(state)
+            self._consume_ignored_delta(state)
             return outbound
 
         # STEP 4 — deterministic graph planning
@@ -170,10 +172,13 @@ class SessionPipeline:
             or state.diagram.diagram_type != effective_type
             or intent.action == IntentAction.REPLACE
         )
-        used_ai_facts = bool(ai_response and ai_response.facts.nodes)
+        use_ai_facts = self._should_use_ai_facts(state, ai_response, effective_type)
+        used_ai_facts = use_ai_facts
 
         if needs_replace:
-            diagram = self._build_full(ai_response, effective_type, state)
+            diagram = self._build_full(
+                ai_response, effective_type, state, use_ai_facts=use_ai_facts
+            )
             diagram = self.render_adapter.layout_document(diagram)
             self._commit_diagram(state, diagram, effective_type)
             self._record_generation(
@@ -192,7 +197,9 @@ class SessionPipeline:
             outbound.append(DiagramReplaceEvent(diagram=diagram))
             return outbound
 
-        patch = self._build_patch(ai_response, effective_type, state)
+        patch = self._build_patch(
+            ai_response, effective_type, state, use_ai_facts=use_ai_facts
+        )
         if patch and patch.ops:
             if patch.base_version != state.diagram.version:
                 logger.warning(
@@ -201,7 +208,9 @@ class SessionPipeline:
                     patch.base_version,
                     state.diagram.version,
                 )
-                diagram = self._build_full(ai_response, effective_type, state)
+                diagram = self._build_full(
+                    ai_response, effective_type, state, use_ai_facts=use_ai_facts
+                )
                 diagram = self.render_adapter.layout_document(diagram)
                 self._commit_diagram(state, diagram, effective_type)
                 self._record_generation(
@@ -214,8 +223,12 @@ class SessionPipeline:
                 outbound.append(DiagramReplaceEvent(diagram=diagram))
                 return outbound
 
-            state.diagram = self.render_adapter.apply_patch(state.diagram, patch)
+            updated_diagram, emitted_patch = self.render_adapter.apply_patch_with_emitted(
+                state.diagram, patch
+            )
+            state.diagram = updated_diagram
             state.diagram_type = effective_type
+            state.last_applied_version = state.diagram.version
             self.transcript_buffer.mark_generated(state)
             self.trigger_engine.arm_cooldown(state)
             self._record_generation(
@@ -226,10 +239,12 @@ class SessionPipeline:
                 is_correction=False,
             )
             logger.info("[%s] diagram.patch ops=%d", state.session_id, len(patch.ops))
-            outbound.append(DiagramPatchEvent(patch=patch))
+            outbound.append(DiagramPatchEvent(patch=emitted_patch))
             return outbound
 
-        diagram = self._build_full(ai_response, effective_type, state)
+        diagram = self._build_full(
+            ai_response, effective_type, state, use_ai_facts=use_ai_facts
+        )
         diagram = self.render_adapter.layout_document(diagram)
         self._commit_diagram(state, diagram, effective_type)
         self._record_generation(
@@ -257,8 +272,10 @@ class SessionPipeline:
         ai_response: Optional[AIResponse],
         effective_type: DiagramType,
         state: SessionState,
+        *,
+        use_ai_facts: bool,
     ) -> DiagramDocument:
-        if ai_response and ai_response.facts.nodes:
+        if use_ai_facts:
             return self.diagram_generator.generate_from_facts(
                 ai_response.facts,
                 effective_type,
@@ -275,8 +292,10 @@ class SessionPipeline:
         ai_response: Optional[AIResponse],
         effective_type: DiagramType,
         state: SessionState,
+        *,
+        use_ai_facts: bool,
     ) -> Optional[DiagramPatch]:
-        if ai_response and ai_response.facts.nodes:
+        if use_ai_facts:
             return self.diagram_generator.generate_patch_from_facts(
                 ai_response.facts, effective_type, state.diagram
             )
@@ -285,6 +304,24 @@ class SessionPipeline:
             state.committed_utterances,
             state.diagram,
         )
+
+    def _should_use_ai_facts(
+        self,
+        state: SessionState,
+        ai_response: Optional[AIResponse],
+        effective_type: DiagramType,
+    ) -> bool:
+        if not ai_response or not ai_response.facts.nodes:
+            return False
+        if effective_type == DiagramType.FLOWCHART:
+            logger.info(
+                "[%s] flowchart planning uses committed utterances; ignoring AI facts nodes=%d edges=%d",
+                state.session_id,
+                len(ai_response.facts.nodes),
+                len(ai_response.facts.edges),
+            )
+            return False
+        return True
 
     def _merge_ai_result(
         self, rules_intent: IntentResult, ai: AIResponse
@@ -339,6 +376,10 @@ class SessionPipeline:
         state.diagram = diagram
         state.diagram_type = effective_type
         state.last_applied_version = diagram.version
+        self.transcript_buffer.mark_generated(state)
+        self.trigger_engine.arm_cooldown(state)
+
+    def _consume_ignored_delta(self, state: SessionState) -> None:
         self.transcript_buffer.mark_generated(state)
         self.trigger_engine.arm_cooldown(state)
 

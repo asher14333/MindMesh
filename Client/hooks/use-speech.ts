@@ -15,11 +15,76 @@
  *   🗣️ Person 1 (FINAL) "then security reviews the compliance setup."
  */
 
-import { useEffect, useRef } from "react"
+import { useEffect, useEffectEvent, useRef } from "react"
 import type { ClientEvent, TranscriptUpdateEvent } from "@/lib/mindmesh/events"
 
 function makeSpeakerId() {
   return `spk-${Math.random().toString(36).slice(2, 10)}`
+}
+
+const FINAL_DEBOUNCE_MS = 600
+const CONNECTOR_ONLY_FINALS = new Set([
+  "first",
+  "then",
+  "next",
+  "finally",
+  "after",
+  "before",
+  "once",
+])
+
+function normalizeSpeechFragment(text: string) {
+  return text.replace(/\s+/g, " ").trim()
+}
+
+function comparisonKey(text: string) {
+  return normalizeSpeechFragment(text)
+    .toLowerCase()
+    .replace(/[.,!?;:]+$/g, "")
+}
+
+function pickLongerFinal(a: string, b: string) {
+  return normalizeSpeechFragment(a).length >= normalizeSpeechFragment(b).length
+    ? normalizeSpeechFragment(a)
+    : normalizeSpeechFragment(b)
+}
+
+function isConnectorOnlyFinal(text: string) {
+  return CONNECTOR_ONLY_FINALS.has(comparisonKey(text))
+}
+
+function mergePendingFinal(
+  pending: string,
+  incoming: string
+): { action: "replace" | "flush"; text: string } {
+  const nextPending = normalizeSpeechFragment(pending)
+  const nextIncoming = normalizeSpeechFragment(incoming)
+  const pendingKey = comparisonKey(nextPending)
+  const incomingKey = comparisonKey(nextIncoming)
+
+  if (pendingKey === incomingKey) {
+    return { action: "replace", text: pickLongerFinal(nextPending, nextIncoming) }
+  }
+
+  if (
+    pendingKey &&
+    incomingKey &&
+    (pendingKey.startsWith(incomingKey) || incomingKey.startsWith(pendingKey))
+  ) {
+    return { action: "replace", text: pickLongerFinal(nextPending, nextIncoming) }
+  }
+
+  if (isConnectorOnlyFinal(nextPending)) {
+    if (isConnectorOnlyFinal(nextIncoming)) {
+      return { action: "replace", text: pickLongerFinal(nextPending, nextIncoming) }
+    }
+    return {
+      action: "replace",
+      text: normalizeSpeechFragment(`${nextPending} ${nextIncoming}`),
+    }
+  }
+
+  return { action: "flush", text: nextIncoming }
 }
 
 // Minimal types for the Web Speech API
@@ -72,6 +137,8 @@ type UseSpeechParams = {
 
 export function useSpeech({ active, send, lastTranscript }: UseSpeechParams) {
   const mySpeakerIdRef = useRef(MY_SPEAKER_ID)
+  const pendingFinalRef = useRef<string | null>(null)
+  const finalFlushTimerRef = useRef<number | null>(null)
 
   // speaker_id → "Person N" label map, shared across renders via ref
   const speakerLabelsRef = useRef<Map<string, string>>(new Map())
@@ -84,6 +151,65 @@ export function useSpeech({ active, send, lastTranscript }: UseSpeechParams) {
     }
     return speakerLabelsRef.current.get(speakerId)!
   }
+
+  const clearPendingFinalTimer = useEffectEvent(() => {
+    if (finalFlushTimerRef.current !== null) {
+      window.clearTimeout(finalFlushTimerRef.current)
+      finalFlushTimerRef.current = null
+    }
+  })
+
+  const flushPendingFinal = useEffectEvent(() => {
+    const text = pendingFinalRef.current
+    clearPendingFinalTimer()
+    if (!text) return
+
+    pendingFinalRef.current = null
+    console.log(`🎤 You (FINAL)    "${text}"`)
+    const sent = send({
+      type: "speech.final",
+      text,
+      speaker: mySpeakerIdRef.current,
+    })
+    if (!sent) {
+      console.warn(
+        "[MindMesh] Failed to send speech.final",
+        `speaker=${mySpeakerIdRef.current}`,
+        `len=${text.length}`,
+        `text=${JSON.stringify(text)}`
+      )
+    }
+  })
+
+  const schedulePendingFinalFlush = useEffectEvent(() => {
+    clearPendingFinalTimer()
+    finalFlushTimerRef.current = window.setTimeout(() => {
+      flushPendingFinal()
+    }, FINAL_DEBOUNCE_MS)
+  })
+
+  const bufferFinal = useEffectEvent((text: string) => {
+    const normalized = normalizeSpeechFragment(text)
+    if (!normalized) return
+
+    const pending = pendingFinalRef.current
+    if (!pending) {
+      pendingFinalRef.current = normalized
+      schedulePendingFinalFlush()
+      return
+    }
+
+    const merged = mergePendingFinal(pending, normalized)
+    if (merged.action === "replace") {
+      pendingFinalRef.current = merged.text
+      schedulePendingFinalFlush()
+      return
+    }
+
+    flushPendingFinal()
+    pendingFinalRef.current = normalized
+    schedulePendingFinalFlush()
+  })
 
   useEffect(() => {
     if (!lastTranscript?.is_final) return
@@ -117,20 +243,7 @@ export function useSpeech({ active, send, lastTranscript }: UseSpeechParams) {
         if (!text) continue
 
         if (result.isFinal) {
-          console.log(`🎤 You (FINAL)    "${text}"`)
-          const sent = send({
-            type: "speech.final",
-            text,
-            speaker: mySpeakerIdRef.current,
-          })
-          if (!sent) {
-            console.warn(
-              "[MindMesh] Failed to send speech.final",
-              `speaker=${mySpeakerIdRef.current}`,
-              `len=${text.length}`,
-              `text=${JSON.stringify(text)}`
-            )
-          }
+          bufferFinal(text)
         } else {
           console.log(`🎤 You (partial)  "${text}"`)
         }
@@ -145,6 +258,7 @@ export function useSpeech({ active, send, lastTranscript }: UseSpeechParams) {
     }
 
     recognition.onend = () => {
+      flushPendingFinal()
       if (!stopped) {
         restartTimer = setTimeout(() => {
           try { recognition.start() } catch { /* already started */ }
@@ -159,7 +273,8 @@ export function useSpeech({ active, send, lastTranscript }: UseSpeechParams) {
     return () => {
       stopped = true
       if (restartTimer) clearTimeout(restartTimer)
+      flushPendingFinal()
       try { recognition.abort() } catch { /* already stopped */ }
     }
-  }, [active, send])
+  }, [active])
 }

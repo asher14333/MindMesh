@@ -80,3 +80,18 @@ def test_correction_prefers_repair_route() -> None:
     assert intent.diagram_type == DiagramType.ORGCHART
     assert intent.scope_relation == ScopeRelation.CORRECTION
     assert classifier.choose_route(intent, state) == "repair"
+
+
+def test_connector_only_utterance_is_treated_as_filler() -> None:
+    classifier = IntentClassifier()
+    state = SessionState(
+        session_id="s-5",
+        locked_diagram_type=DiagramType.FLOWCHART,
+    )
+
+    intent = classifier.classify("Then", state)
+
+    assert intent.diagram_type == DiagramType.FLOWCHART
+    assert intent.scope_relation == ScopeRelation.OUT_OF_SCOPE
+    assert intent.action == IntentAction.NOOP
+    assert intent.reason == "empty_or_filler"

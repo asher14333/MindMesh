@@ -31,6 +31,12 @@ class RenderAdapter:
     def apply_patch(
         self, current: DiagramDocument, patch: DiagramPatch
     ) -> DiagramDocument:
+        updated, _ = self.apply_patch_with_emitted(current, patch)
+        return updated
+
+    def apply_patch_with_emitted(
+        self, current: DiagramDocument, patch: DiagramPatch
+    ) -> tuple[DiagramDocument, DiagramPatch]:
         nodes = list(current.nodes)
         edges = list(current.edges)
 
@@ -48,6 +54,11 @@ class RenderAdapter:
 
             elif op.op == "update_node":
                 updated = DiagramNode.model_validate(op.data)
+                existing = next((node for node in nodes if node.id == updated.id), None)
+                if existing is not None and updated.position == Position():
+                    updated = updated.model_copy(
+                        update={"position": existing.position}
+                    )
                 nodes = self._replace_by_id(nodes, updated)
 
             elif op.op == "add_edge":
@@ -69,7 +80,7 @@ class RenderAdapter:
             elif op.op == "remove_edge":
                 edges = [e for e in edges if e.id != op.data["id"]]
 
-        return DiagramDocument(
+        updated_document = DiagramDocument(
             diagram_id=current.diagram_id,
             diagram_type=patch.diagram_type,
             nodes=nodes,
@@ -78,6 +89,25 @@ class RenderAdapter:
             layout_version=current.layout_version
             + (1 if patch.layout_changed else 0),
         )
+        node_map = {node.id: node for node in updated_document.nodes}
+        emitted_ops = []
+
+        for op in patch.ops:
+            if op.op in {"add_node", "update_node"}:
+                node_id = op.data.get("id")
+                rewritten_node = node_map.get(node_id)
+                if rewritten_node is not None:
+                    emitted_ops.append(
+                        op.model_copy(
+                            update={
+                                "data": rewritten_node.model_dump(by_alias=True)
+                            }
+                        )
+                    )
+                    continue
+            emitted_ops.append(op)
+
+        return updated_document, patch.model_copy(update={"ops": emitted_ops})
 
     # ------------------------------------------------------------------
 
