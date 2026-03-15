@@ -117,7 +117,7 @@ export const MindMeshNode = memo(({ data, selected, id }: NodeProps<RFNode>) => 
       <Handle
         type="target"
         position={Position.Left}
-        className="!w-3.5 !h-3.5 !-left-2 !bg-slate-400 !border-2 !border-white hover:!bg-blue-500 hover:!scale-125 !transition-all"
+        className="!cursor-crosshair !w-3.5 !h-3.5 !-left-2 !bg-slate-400 !border-2 !border-white hover:!bg-blue-500 hover:!scale-125 !transition-all"
       />
       
       {/* Remote selection badge */}
@@ -161,20 +161,20 @@ export const MindMeshNode = memo(({ data, selected, id }: NodeProps<RFNode>) => 
       {/* Footer / Actions */}
       <div className="flex items-center gap-1.5 mt-auto pt-2 border-t border-slate-50">
         <button
-          className="group p-1.5 rounded-full hover:bg-emerald-50 text-slate-300 hover:text-emerald-600 transition-colors"
+          className="group cursor-pointer p-1.5 rounded-full hover:bg-emerald-50 text-slate-300 hover:text-emerald-600 transition-colors"
           title="Mark done"
         >
           <Check className="w-4 h-4" />
         </button>
         <button
-          className="group p-1.5 rounded-full hover:bg-blue-50 text-slate-300 hover:text-blue-600 transition-colors"
+          className="group cursor-pointer p-1.5 rounded-full hover:bg-blue-50 text-slate-300 hover:text-blue-600 transition-colors"
           onClick={handleStartEdit}
           title="Edit label"
         >
           <Edit2 className="w-4 h-4" />
         </button>
         <button
-          className="group p-1.5 rounded-full hover:bg-red-50 text-slate-300 hover:text-red-600 transition-colors"
+          className="group cursor-pointer p-1.5 rounded-full hover:bg-red-50 text-slate-300 hover:text-red-600 transition-colors"
           onClick={handleDelete}
           title="Delete node"
         >
@@ -197,7 +197,7 @@ export const MindMeshNode = memo(({ data, selected, id }: NodeProps<RFNode>) => 
       <Handle
         type="source"
         position={Position.Right}
-        className="!w-3.5 !h-3.5 !-right-2 !bg-slate-400 !border-2 !border-white hover:!bg-blue-500 hover:!scale-125 !transition-all"
+        className="!cursor-crosshair !w-3.5 !h-3.5 !-right-2 !bg-slate-400 !border-2 !border-white hover:!bg-blue-500 hover:!scale-125 !transition-all"
       />
     </div>
   )

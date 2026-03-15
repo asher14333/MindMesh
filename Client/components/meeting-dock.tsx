@@ -64,9 +64,9 @@ export default function MeetingDock({ onLeave }: MeetingDockProps) {
   }
 
   return (
-    <div className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-center pb-5">
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-center justify-center pb-5">
       <div
-        className="flex items-center gap-1.5 rounded-2xl border border-neutral-200 bg-white px-4 py-2"
+        className="pointer-events-auto flex items-center gap-1.5 rounded-2xl border border-neutral-200 bg-white px-4 py-2"
         style={{
           boxShadow:
             "0 -2px 20px rgba(0,0,0,0.03), 0 4px 16px rgba(0,0,0,0.06)",

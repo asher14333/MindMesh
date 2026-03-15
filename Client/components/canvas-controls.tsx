@@ -29,7 +29,7 @@ export default function CanvasControls() {
             <button
               key={mode.id}
               onClick={() => setActiveView(mode.id)}
-              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-all ${
+              className={`cursor-pointer flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-all ${
                 isActive
                   ? "bg-primary text-primary-foreground"
                   : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"

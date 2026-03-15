@@ -336,13 +336,14 @@ export default function ProcessCanvas() {
 
   // ─── Add node via button ─────────────────────────────────────────────────
   const handleAddNode = useCallback(() => {
-    if (!rfInstance || !canvasRef.current) return
-    // Calculate center of visible canvas in flow coordinates directly
-    const viewport = rfInstance.getViewport()
-    const rect = canvasRef.current.getBoundingClientRect()
-    const position = {
-      x: (-viewport.x + rect.width / 2) / viewport.zoom,
-      y: (-viewport.y + rect.height / 2) / viewport.zoom,
+    let position = { x: 100, y: 100 } // fallback
+    if (rfInstance && canvasRef.current) {
+      const viewport = rfInstance.getViewport()
+      const rect = canvasRef.current.getBoundingClientRect()
+      position = {
+        x: (-viewport.x + rect.width / 2) / viewport.zoom,
+        y: (-viewport.y + rect.height / 2) / viewport.zoom,
+      }
     }
     addNode(position, { label: "New node", kind: "idea" })
   }, [rfInstance, addNode])
@@ -412,8 +413,8 @@ export default function ProcessCanvas() {
         {state.desynced ? <span className="font-medium text-amber-600">desynced</span> : null}
       </div>
 
-      {/* Add node button */}
-      <div className="absolute left-4 bottom-4 z-20">
+      {/* Add node button (above dock area) */}
+      <div className="absolute left-4 bottom-20 z-20">
         <Button
           size="sm"
           variant="outline"

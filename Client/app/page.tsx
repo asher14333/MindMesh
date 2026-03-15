@@ -51,7 +51,7 @@ export default function MindMeshDemo() {
         <p className="text-lg font-medium text-neutral-900">You left the call</p>
         <button
           onClick={() => { setCallEnded(false); setMindMeshActive(false) }}
-          className="rounded-lg border border-neutral-200 bg-white px-4 py-2 text-sm font-semibold text-neutral-700 hover:bg-neutral-50 transition-colors"
+          className="cursor-pointer rounded-lg border border-neutral-200 bg-white px-4 py-2 text-sm font-semibold text-neutral-700 hover:bg-neutral-50 transition-colors"
         >
           Rejoin
         </button>
