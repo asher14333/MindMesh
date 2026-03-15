@@ -1,6 +1,15 @@
 "use client"
 
-import { Mic, MicOff, Video, VideoOff, Monitor, MoreHorizontal, PhoneOff, Sparkles } from "lucide-react"
+import { useEffect, useState } from "react"
+import {
+  Mic,
+  MicOff,
+  Video,
+  VideoOff,
+  PhoneOff,
+  Clock,
+  Sparkles,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useWebRTCContext } from "@/hooks/webrtc-context"
 
@@ -9,8 +18,26 @@ interface MeetingDockStandbyProps {
   onLeave?: () => void
 }
 
-export default function MeetingDockStandby({ onActivate, onLeave }: MeetingDockStandbyProps) {
-  const { isMuted, isCameraOn, toggleMic, toggleCamera, leaveCall } = useWebRTCContext()
+/** Simple elapsed-time counter (HH:MM:SS). */
+function useElapsedTime() {
+  const [seconds, setSeconds] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setSeconds((s) => s + 1), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+}
+
+export default function MeetingDockStandby({
+  onActivate,
+  onLeave,
+}: MeetingDockStandbyProps) {
+  const { isMuted, isCameraOn, toggleMic, toggleCamera, leaveCall } =
+    useWebRTCContext()
+  const elapsed = useElapsedTime()
 
   function handleLeave() {
     leaveCall()
@@ -18,48 +45,68 @@ export default function MeetingDockStandby({ onActivate, onLeave }: MeetingDockS
   }
 
   return (
-    <div className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 md:bottom-6">
-      {/* Meeting controls */}
-      <div className="flex items-center gap-1.5 rounded-xl border border-border/60 bg-card/95 p-1.5 shadow-sm backdrop-blur-sm">
+    <div className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-center pb-5">
+      <div
+        className="flex items-center gap-1.5 rounded-2xl border border-neutral-200 bg-white px-4 py-2"
+        style={{
+          boxShadow:
+            "0 -2px 20px rgba(0,0,0,0.03), 0 4px 16px rgba(0,0,0,0.06)",
+        }}
+      >
+        {/* Timer */}
+        <div className="flex items-center gap-1.5 border-r border-neutral-200 pr-3 mr-1">
+          <Clock className="h-3.5 w-3.5 text-neutral-400" />
+          <span className="font-mono text-xs font-medium text-neutral-500 tabular-nums">
+            {elapsed}
+          </span>
+        </div>
+
+        {/* Mic */}
         <Button
           variant="ghost"
           size="icon"
           onClick={toggleMic}
           title={isMuted ? "Unmute" : "Mute"}
-          className={`h-10 w-10 rounded-lg ${
-            isMuted ? "bg-red-500/10 text-red-600 hover:bg-red-500/20" : "text-foreground hover:bg-muted"
+          className={`h-10 w-10 rounded-full ${
+            isMuted
+              ? "bg-red-50 text-red-500 hover:bg-red-100"
+              : "text-neutral-600 hover:bg-neutral-100"
           }`}
         >
-          {isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+          {isMuted ? (
+            <MicOff className="h-[18px] w-[18px]" />
+          ) : (
+            <Mic className="h-[18px] w-[18px]" />
+          )}
         </Button>
+
+        {/* Camera */}
         <Button
           variant="ghost"
           size="icon"
           onClick={toggleCamera}
           title={isCameraOn ? "Turn off camera" : "Turn on camera"}
-          className={`h-10 w-10 rounded-lg ${
-            !isCameraOn ? "bg-red-500/10 text-red-600 hover:bg-red-500/20" : "text-foreground hover:bg-muted"
+          className={`h-10 w-10 rounded-full ${
+            !isCameraOn
+              ? "bg-red-50 text-red-500 hover:bg-red-100"
+              : "text-neutral-600 hover:bg-neutral-100"
           }`}
         >
-          {isCameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-10 w-10 rounded-lg text-foreground hover:bg-muted"
-        >
-          <Monitor className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-10 w-10 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <MoreHorizontal className="h-4 w-4" />
+          {isCameraOn ? (
+            <Video className="h-[18px] w-[18px]" />
+          ) : (
+            <VideoOff className="h-[18px] w-[18px]" />
+          )}
         </Button>
 
-        {/* Divider */}
-        <div className="mx-1 h-6 w-px bg-border/60" />
+        {/* ── Open Canvas (primary action) ── */}
+        <Button
+          onClick={onActivate}
+          className="mx-1 h-10 gap-2 rounded-xl bg-neutral-900 px-5 text-sm font-semibold text-white shadow-sm hover:bg-neutral-800"
+        >
+          <Sparkles className="h-4 w-4" />
+          Open Canvas
+        </Button>
 
         {/* End call */}
         <Button
@@ -67,20 +114,13 @@ export default function MeetingDockStandby({ onActivate, onLeave }: MeetingDockS
           size="icon"
           onClick={handleLeave}
           title="Leave call"
-          className="h-10 w-10 rounded-lg bg-red-500/10 text-red-600 hover:bg-red-500 hover:text-white"
+          className="h-10 w-10 rounded-full bg-red-500 text-white hover:bg-red-600"
         >
-          <PhoneOff className="h-4 w-4" />
+          <PhoneOff className="h-[18px] w-[18px]" />
         </Button>
-      </div>
 
-      {/* MindMesh activation button */}
-      <Button
-        onClick={onActivate}
-        className="h-10 gap-2 rounded-xl bg-accent px-4 text-accent-foreground shadow-sm hover:bg-accent/90"
-      >
-        <Sparkles className="h-4 w-4" />
-        <span className="text-sm font-medium">Turn On MindMesh</span>
-      </Button>
+
+      </div>
     </div>
   )
 }

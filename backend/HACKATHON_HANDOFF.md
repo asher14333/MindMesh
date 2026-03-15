@@ -10,7 +10,7 @@ It covers:
 - what each person owns, delivers, and should not touch
 
 ## Goal
-
+#
 Build a near-real-time backend for MindMesh that:
 - accepts streamed transcript events over WebSocket
 - buffers transcript instead of generating on every token
