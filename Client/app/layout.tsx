@@ -14,20 +14,7 @@ export const metadata: Metadata = {
   description: 'Turn live conversations into visual explanations in real-time',
   generator: 'v0.app',
   icons: {
-    icon: [
-      {
-        url: '/icon-light-32x32.png',
-        media: '(prefers-color-scheme: light)',
-      },
-      {
-        url: '/icon-dark-32x32.png',
-        media: '(prefers-color-scheme: dark)',
-      },
-      {
-        url: '/icon.svg',
-        type: 'image/svg+xml',
-      },
-    ],
+    icon: '/Favicon.png',
     apple: '/apple-icon.png',
   },
 }
