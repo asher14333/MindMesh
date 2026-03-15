@@ -321,10 +321,55 @@ class DiagramGenerator:
 
     def _flowchart_facts(self, utterances: list[str]) -> AIFacts:
         # First pass: look for one-to-many / branching patterns across all utterances.
-        for utterance in utterances:
+        for idx, utterance in enumerate(utterances):
             branch = self._detect_one_to_many(utterance)
             if branch:
-                return self._branching_facts(branch)
+                branch_facts = self._branching_facts(branch)
+                prefix_utterances = utterances[:idx]
+
+                # No preceding steps — return the branch on its own
+                if not prefix_utterances:
+                    return branch_facts
+
+                # Build a linear chain for the utterances that came before the
+                # branching sentence, then connect the last prefix node to the
+                # branch parent with a sequence edge.
+                facts = AIFacts()
+                previous_key: Optional[str] = None
+                max_prefix = self.MAX_NODES - len(branch_facts.nodes)
+                for i, prev_utt in enumerate(
+                    prefix_utterances[:max_prefix], start=1
+                ):
+                    label = self._clean_flow_label(prev_utt)
+                    key = self._semantic_key(label, fallback=f"step_{i}")
+                    facts.nodes.append(
+                        AIFactNode(key=key, label=label, kind="step")
+                    )
+                    if previous_key:
+                        facts.edges.append(
+                            AIFactEdge(
+                                source_key=previous_key,
+                                target_key=key,
+                                kind="sequence",
+                            )
+                        )
+                    previous_key = key
+
+                # Connect last linear node → branch parent
+                branch_parent_key = branch_facts.nodes[0].key
+                if previous_key:
+                    facts.edges.append(
+                        AIFactEdge(
+                            source_key=previous_key,
+                            target_key=branch_parent_key,
+                            kind="sequence",
+                        )
+                    )
+
+                # Merge in branch nodes and edges
+                facts.nodes.extend(branch_facts.nodes)
+                facts.edges.extend(branch_facts.edges)
+                return facts
 
         # Fallback: linear chain
         facts = AIFacts()
@@ -412,6 +457,19 @@ class DiagramGenerator:
             children = self._parse_list_items(m.group(2))
             # Only treat as one-to-many when 2+ children and the parent is short
             if len(children) >= 2 and len(parent_candidate.split()) <= 8:
+                return (self._titleize(parent_candidate), children)
+
+        # Pattern 6: "X are/is A and B" / "X are/is A, B, and C" (plain enumeration)
+        # Requires right-hand side to contain "and" or "or" as a list signal
+        m = re.search(
+            r"^(.+?)\s+(?:are|is)\s+(.+(?:\band\b|\bor\b).+)",
+            cleaned,
+            re.IGNORECASE,
+        )
+        if m:
+            parent_candidate = m.group(1).strip()
+            children = self._parse_list_items(m.group(2))
+            if len(children) >= 2 and len(parent_candidate.split()) <= 6:
                 return (self._titleize(parent_candidate), children)
 
         return None
