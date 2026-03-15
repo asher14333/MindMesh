@@ -237,7 +237,7 @@ export const ServerEventSchema = z.discriminatedUnion("type", [
   StatusEventSchema,
   ErrorEventSchema,
 ])
-export type ServerEvent = z.infer<typeof ServerEventSchema> | CollabServerEvent | TranscriptionToggleEvent
+export type ServerEvent = z.infer<typeof ServerEventSchema> | CollabServerEvent | TranscriptionToggleEvent | SessionInfoEvent
 
 export function parseServerEvent(raw: unknown): ServerEvent | null {
   // Try lightweight event types first (collab + transcription toggle)
@@ -247,6 +247,7 @@ export function parseServerEvent(raw: unknown): ServerEvent | null {
     if (r.type === "collab.selection") return raw as CollabSelectionEvent
     if (r.type === "collab.edit") return raw as CollabEditEvent
     if (r.type === "transcription.toggle") return raw as TranscriptionToggleEvent
+    if (r.type === "session.info") return raw as SessionInfoEvent
   }
   const parsed = ServerEventSchema.safeParse(raw)
   if (!parsed.success) return null
@@ -297,6 +298,12 @@ export type TranscriptionToggleEvent = {
   enabled: boolean
   user_id: string
   user_name: string
+}
+
+// Session info (sent once per connection so all clients share the same timer)
+export type SessionInfoEvent = {
+  type: "session.info"
+  started_at: number  // epoch milliseconds
 }
 
 // Minimal inbound client events used to make the demo "go".

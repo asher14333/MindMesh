@@ -110,6 +110,11 @@ class ErrorEvent(BaseModel):
     message: str
 
 
+class SessionInfoEvent(BaseModel):
+    type: Literal["session.info"] = "session.info"
+    started_at: float  # epoch milliseconds
+
+
 OutboundEvent = Union[
     TranscriptUpdateEvent,
     IntentResultEvent,
@@ -117,6 +122,7 @@ OutboundEvent = Union[
     DiagramReplaceEvent,
     StatusEvent,
     ErrorEvent,
+    SessionInfoEvent,
 ]
 
 

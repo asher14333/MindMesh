@@ -1,3 +1,4 @@
+import time
 from enum import Enum
 from typing import Optional
 
@@ -38,6 +39,7 @@ class SessionState(BaseModel):
     cooldown_until: float = 0.0
     connections: int = 0
     diagram: DiagramDocument = Field(default_factory=DiagramDocument)
+    started_at: float = Field(default_factory=time.time)  # epoch seconds
 
     locked_diagram_type: Optional[DiagramType] = None
     scope_summary: str = ""

@@ -26,6 +26,7 @@ import type {
   ErrorEvent,
   PatchOp,
   ServerEvent,
+  SessionInfoEvent,
   SessionMode,
   StatusEvent,
   TranscriptUpdateEvent,
@@ -80,6 +81,8 @@ export type MindMeshState = {
   // Shared transcription state
   isTranscribing: boolean
   transcriptionToggledBy: string | null
+  // Shared session start time (epoch ms) — synced from backend so all clients agree
+  sessionStartedAt: number
 }
 
 type MindMeshContextValue = {
@@ -103,6 +106,8 @@ type MindMeshContextValue = {
   userColor: string
   // Transcription
   toggleTranscription: () => void
+  // Session info
+  sessionStartedAt: number
 }
 
 const MindMeshContext = createContext<MindMeshContextValue | null>(null)
@@ -197,6 +202,8 @@ function summarizeEvent(event: ServerEvent): string {
       return `collab.edit ops=${event.ops.length}`
     case "transcription.toggle":
       return `transcription.toggle enabled=${event.enabled} by=${event.user_name}`
+    case "session.info":
+      return `session.info started_at=${event.started_at}`
     default:
       return `unknown event`
   }
@@ -361,6 +368,7 @@ const initialState: MindMeshState = {
   userEditedNodeIds: new Set(),
   isTranscribing: false,
   transcriptionToggledBy: null,
+  sessionStartedAt: Date.now(),  // fallback until server sends session.info
 }
 
 function applyCanvasEditOp(
@@ -563,6 +571,13 @@ function reducer(state: MindMeshState, action: Action): MindMeshState {
     }
   }
 
+  if (event.type === "session.info") {
+    return {
+      ...state,
+      sessionStartedAt: (event as SessionInfoEvent).started_at,
+    }
+  }
+
   const withRecent = {
     ...state,
     recentEvents: pushRecent(state.recentEvents, {
@@ -657,8 +672,8 @@ export function MindMeshProvider({
   const onServerEvent = useCallback((event: ServerEvent) => {
     if (!event || typeof event !== "object" || !("type" in event)) return
 
-    // Handle collab events + transcription toggle
-    if (event.type === "collab.cursor" || event.type === "collab.selection" || event.type === "collab.edit" || event.type === "transcription.toggle") {
+    // Handle collab events + transcription toggle + session info
+    if (event.type === "collab.cursor" || event.type === "collab.selection" || event.type === "collab.edit" || event.type === "transcription.toggle" || event.type === "session.info") {
       dispatch({ type: "server.event", event })
       return
     }
@@ -869,8 +884,9 @@ export function MindMeshProvider({
       userId,
       userColor,
       toggleTranscription,
+      sessionStartedAt: state.sessionStartedAt,
     }),
-    [connectionState, resetDiagram, runDemoScript, send, state, updateNode, addNode, removeNode, addEdge, removeEdge, sendCursorPosition, sendSelection, userId, userColor, toggleTranscription]
+    [connectionState, resetDiagram, runDemoScript, send, state, updateNode, addNode, removeNode, addEdge, removeEdge, sendCursorPosition, sendSelection, userId, userColor, toggleTranscription, state.sessionStartedAt]
   )
 
   return <MindMeshContext.Provider value={value}>{children}</MindMeshContext.Provider>

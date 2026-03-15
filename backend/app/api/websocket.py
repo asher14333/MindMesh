@@ -10,6 +10,7 @@ from app.schemas.events import (
     CollabSelectionEvent,
     DiagramReplaceEvent,
     ErrorEvent,
+    SessionInfoEvent,
     StatusEvent,
     TranscriptionToggleEvent,
     UICommandEvent,
@@ -156,6 +157,12 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
             mode=state.mode,
             message="connected",
             diagram_type=state.diagram_type,
+        ).model_dump(mode="json")
+    )
+    # Send session start time so all clients show a consistent timer
+    await websocket.send_json(
+        SessionInfoEvent(
+            started_at=state.started_at * 1000,  # convert seconds → ms for JS Date.now()
         ).model_dump(mode="json")
     )
     if state.diagram.nodes:

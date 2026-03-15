@@ -64,6 +64,8 @@ function summarizeServerEvent(event: ServerEvent): string {
       return `collab.edit ops=${event.ops.length}`
     case "transcription.toggle":
       return `transcription.toggle enabled=${event.enabled} user=${event.user_name}`
+    case "session.info":
+      return `session.info started_at=${event.started_at}`
     default:
       return `unknown event type`
   }

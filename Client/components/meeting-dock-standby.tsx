@@ -20,16 +20,17 @@ interface MeetingDockStandbyProps {
   onLeave?: () => void
 }
 
-/** Simple elapsed-time counter (HH:MM:SS). */
-function useElapsedTime() {
-  const [seconds, setSeconds] = useState(0)
+/** Elapsed-time counter driven by a shared start timestamp (HH:MM:SS). */
+function useElapsedTime(startTime: number) {
+  const [, tick] = useState(0)
   useEffect(() => {
-    const id = setInterval(() => setSeconds((s) => s + 1), 1000)
+    const id = setInterval(() => tick((t) => t + 1), 1000)
     return () => clearInterval(id)
   }, [])
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = seconds % 60
+  const totalSeconds = Math.max(0, Math.floor((Date.now() - startTime) / 1000))
+  const h = Math.floor(totalSeconds / 3600)
+  const m = Math.floor((totalSeconds % 3600) / 60)
+  const s = totalSeconds % 60
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
 }
 
@@ -39,8 +40,8 @@ export default function MeetingDockStandby({
 }: MeetingDockStandbyProps) {
   const { isMuted, isCameraOn, toggleMic, toggleCamera, leaveCall } =
     useWebRTCContext()
-  const { state, toggleTranscription } = useMindMesh()
-  const elapsed = useElapsedTime()
+  const { state, toggleTranscription, sessionStartedAt } = useMindMesh()
+  const elapsed = useElapsedTime(sessionStartedAt)
   const isListening = state.isTranscribing
 
   function handleLeave() {
