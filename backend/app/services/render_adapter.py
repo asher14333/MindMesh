@@ -15,6 +15,10 @@ class RenderAdapter:
     FLOWCHART_Y = 200
 
     def layout_document(self, diagram: DiagramDocument) -> DiagramDocument:
+        # Use tree layout when any branch edges are present
+        if any(e.data.kind == "branch" for e in diagram.edges):
+            return self._layout_tree(diagram)
+
         total = len(diagram.nodes)
         positioned = [
             node.model_copy(
@@ -29,6 +33,63 @@ class RenderAdapter:
         return diagram.model_copy(
             update={
                 "nodes": positioned,
+                "layout_version": diagram.layout_version + 1,
+            }
+        )
+
+    def _layout_tree(self, diagram: DiagramDocument) -> DiagramDocument:
+        """Tree layout for one-to-many (branching) diagrams.
+
+        Parent nodes sit on the top row (y=100).  Their branch children fan
+        out on a row below (y=300), centred under their parent.  Non-branch
+        nodes (plain sequence steps, etc.) also sit on the top row.
+        """
+        NODE_W = self.FLOWCHART_NODE_WIDTH + self.FLOWCHART_GAP  # 280 px
+
+        # Build parent→children map for branch edges only
+        branch_children: dict[str, list[str]] = {}
+        branch_child_ids: set[str] = set()
+        for edge in diagram.edges:
+            if edge.data.kind == "branch":
+                branch_children.setdefault(edge.source, []).append(edge.target)
+                branch_child_ids.add(edge.target)
+
+        # Identify top-level nodes (not a target of any branch edge)
+        top_nodes = [n for n in diagram.nodes if n.id not in branch_child_ids]
+
+        positions: dict[str, Position] = {}
+        x_cursor = self.FLOWCHART_START_X
+
+        for node in top_nodes:
+            children_ids = branch_children.get(node.id, [])
+            if children_ids:
+                n = len(children_ids)
+                # Width consumed by the children row
+                children_span = n * NODE_W - self.FLOWCHART_GAP
+                # Centre parent over its children:
+                # parent_left_x = first_child_x + (children_span - node_width) / 2
+                center_x = x_cursor + max(0, (children_span - self.FLOWCHART_NODE_WIDTH) / 2)
+                positions[node.id] = Position(x=int(center_x), y=100)
+                for i, child_id in enumerate(children_ids):
+                    positions[child_id] = Position(x=x_cursor + i * NODE_W, y=300)
+                x_cursor += children_span + NODE_W
+            else:
+                positions[node.id] = Position(x=x_cursor, y=100)
+                x_cursor += NODE_W
+
+        # Safety net: position any node that was not placed yet
+        for node in diagram.nodes:
+            if node.id not in positions:
+                positions[node.id] = Position(x=x_cursor, y=100)
+                x_cursor += NODE_W
+
+        new_nodes = [
+            node.model_copy(update={"position": positions[node.id]})
+            for node in diagram.nodes
+        ]
+        return diagram.model_copy(
+            update={
+                "nodes": new_nodes,
                 "layout_version": diagram.layout_version + 1,
             }
         )

@@ -140,6 +140,7 @@ class SessionPipeline:
                 graph_summary=self._build_graph_summary(state),
                 scope_summary=self._scope_summary_for_prompt(state),
                 request_id=state.last_request_id,
+                current_diagram=state.diagram if state.diagram.nodes else None,
             )
             if ai_response and ai_response.request_id == state.last_request_id:
                 state.telemetry.model_successes += 1

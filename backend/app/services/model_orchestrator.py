@@ -18,12 +18,21 @@ logger = logging.getLogger(__name__)
 class AIFactNode(BaseModel):
     key: str
     label: str
+    # Extended kind vocabulary: step | decision | idea | action_item |
+    # milestone | root | branch | person
     kind: str = "step"
     status: Optional[str] = None
     description: Optional[str] = None
+    # lane / group both map to swimlane grouping; group is the prompt-facing name
     lane: Optional[str] = None
+    group: Optional[str] = None
     actor: Optional[str] = None
     time_label: Optional[str] = None
+
+    @property
+    def effective_lane(self) -> Optional[str]:
+        """Return whichever grouping field the LLM populated."""
+        return self.lane or self.group
 
 
 class AIFactEdge(BaseModel):
@@ -57,11 +66,79 @@ class AIResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """\
-You are a diagram extraction engine for a live meeting tool. Given meeting \
-transcript text and context about the current diagram, extract structured \
-semantic facts that describe a visual diagram.
+You are the reasoning engine for MindMesh, a real-time system that converts \
+live conversation into structured visual diagrams.
 
-Respond ONLY with valid JSON matching this schema:
+Your job is to analyze transcript text and produce a clean, meaningful diagram \
+that reflects the actual ideas, relationships, and structure of the discussion.
+
+You are NOT a transcription tool.
+You are NOT summarizing sentences.
+You are extracting structure, meaning, and relationships.
+
+---
+
+PRIMARY GOAL
+
+Turn messy human conversation into a clean, structured, visual model.
+
+DO NOT copy transcript sentences into nodes.
+DO NOT create one node per sentence.
+DO NOT generate noisy or redundant nodes.
+DO merge repeated or similar ideas into a single node.
+DO infer relationships between concepts.
+DO extract meaningful structure — steps, decisions, owners, themes.
+
+---
+
+DIAGRAM TYPES
+
+Choose ONE based on context:
+- flowchart  → processes, sequences, approvals, steps
+- mindmap    → brainstorming, grouped ideas, themes
+- timeline   → chronological events, plans, phases
+- orgchart   → people, teams, responsibilities
+
+---
+
+STRUCTURE DETECTION CUES
+
+Sequence:    "first", "then", "after", "finally", "next"
+Decision:    "either", "option", "choose", "decide", "depends on"
+Ownership:   "X will do Y", "assigned to", "responsible for"
+Brainstorm:  "ideas", "maybe", "we could", "options include"
+Hierarchy:   "manager", "team", "reports to", "head of"
+Time:        "today", "next week", "phase 1", "Q3", "deadline"
+One-to-many: "types of", "kinds of", "categories include", "consists of",
+             "made up of", "can be", "are either", "X: A and B",
+             "there are N types/kinds", "A and B are types of X"
+
+ONE-TO-MANY / BRANCHING PATTERNS (IMPORTANT)
+
+When the speaker describes a concept that has multiple subtypes, variants, or \
+components, you MUST create a branching structure — NOT a linear chain.
+
+Examples that require branching:
+- "There are 2 types of dogs: German Shepherd and Golden Retriever"
+  → node "Dogs" (kind=step) with branch edges to "German Shepherd" and \
+"Golden Retriever" (both kind=branch)
+- "Payment methods include credit card, debit card, and PayPal"
+  → node "Payment Methods" (kind=step) + branch edges to each method
+- "The system has three modules: auth, billing, and reporting"
+  → node "System Modules" (kind=step) + branch edges to each module
+- "Dogs can be German Shepherds or Golden Retrievers"
+  → same branching structure
+
+Rule: ONE parent node + ONE child node per item + ONE "branch" edge \
+per parent→child.
+Do NOT create a linear sequence (A→B→C) for these patterns.
+Do NOT merge the children into one node.
+
+---
+
+RESPOND ONLY WITH VALID JSON — no prose, no markdown fences.
+
+Schema:
 
 {
   "decision": {
@@ -73,48 +150,53 @@ Respond ONLY with valid JSON matching this schema:
   "facts": {
     "nodes": [
       {
-        "key": "<unique_snake_case_semantic_key>",
-        "label": "<human readable, max 56 chars>",
-        "kind": "root | step | decision | milestone | person | branch",
+        "key": "<stable_snake_case_semantic_key>",
+        "label": "<short meaningful phrase, max 56 chars>",
+        "kind": "step | decision | idea | action_item | milestone | root | branch | person",
         "status": "done | active | blocked | waiting" or null,
-        "description": "<optional>" or null,
-        "lane": "<optional grouping>" or null,
-        "actor": "<optional person/role>" or null,
-        "time_label": "<optional time ref>" or null
+        "description": "<optional extra detail>" or null,
+        "lane": "<optional swimlane / grouping>" or null,
+        "actor": "<optional responsible person/role>" or null,
+        "time_label": "<optional time reference>" or null
       }
     ],
     "edges": [
       {
-        "source_key": "<semantic_key>",
-        "target_key": "<semantic_key>",
+        "source_key": "<key>",
+        "target_key": "<key>",
         "kind": "sequence | reports_to | depends_on | branch",
-        "label": "<optional>" or null
+        "label": "<optional edge label>" or null
       }
     ]
   },
-  "reason": "<one sentence>"
+  "reason": "<one sentence explaining what changed>"
 }
 
-Rules:
-- Max 12 nodes, max 16 edges, max 56 chars per label.
-- Do NOT include positions, numeric IDs, or style tokens.
-- Use descriptive snake_case keys (e.g. "sales_handoff").
-- Same concept must always use the same key across calls.
-- Return the FULL canonical in-scope graph after applying the transcript delta.
-- Do NOT return delta-only nodes or edges.
-- flowchart: "step"/"decision" kinds, "sequence" edges.
-- timeline: "milestone" kind with "time_label", "sequence" edges.
-- mindmap: "root" center + "branch" children, "depends_on" edges.
-- orgchart: "person" kind with "actor", "reports_to" edges.
-- Off-topic transcript: action="noop", scope_relation="out_of_scope".
-- Meta-talk, acknowledgements, questions, requests, and planning chatter that \
-  do not describe real process steps are off-topic.
-- Examples of off-topic flowchart chatter: "okay that kind of works", \
-  "what's going to happen next", "can someone send that?".
-- Corrections ("actually", "no", "instead"): scope_relation="correction", \
-include corrected facts.
-- Prefer "update" for incremental additions.
-- Use "replace" only when the structure fundamentally changes.\
+---
+
+STRICT RULES
+
+1. Max 12 nodes, max 16 edges, max 56 chars per label.
+2. Do NOT include positions, numeric IDs, or style tokens.
+3. Use descriptive snake_case keys (e.g. "security_review", "legal_approval").
+4. The SAME concept must always use the SAME key across calls — keys are stable IDs.
+5. Return the FULL canonical graph (all nodes), not just the delta.
+6. flowchart  → use "step" or "decision" kinds; "sequence" or "branch" edges.
+7. timeline   → use "milestone" kind with "time_label"; "sequence" edges.
+8. mindmap    → use "root" center + "branch" or "idea" children; "depends_on" edges.
+9. orgchart   → use "person" kind with "actor"; "reports_to" edges.
+10. Off-topic chatter (meta-talk, filler, questions, acknowledgements like \
+"okay", "got it", "can someone send that?") → action="noop", \
+scope_relation="out_of_scope", return current graph unchanged.
+11. Corrections ("actually", "no", "instead", "wait") → \
+scope_relation="correction"; include the corrected node(s) in facts.
+12. Prefer action="update" for incremental additions to an existing diagram.
+13. Use action="replace" ONLY when the topic or structure fundamentally changes.
+14. ONE-TO-MANY: when hearing patterns like "types of X: A and B", "X includes \
+A, B, C", "X can be A or B", "A and B are kinds of X" → create ONE parent node \
+(kind="step") for X and ONE child node (kind="branch") per item, connected with \
+kind="branch" edges from parent to each child. NEVER use a linear sequence chain \
+for these patterns.\
 """
 
 
@@ -151,12 +233,13 @@ class ModelOrchestrator:
         graph_summary: str,
         scope_summary: str,
         request_id: int = 0,
+        current_diagram: Optional[object] = None,
     ) -> Optional[AIResponse]:
         if not self._client:
             return None
 
         user_content = self._build_user_prompt(
-            delta, diagram_type, graph_summary, scope_summary
+            delta, diagram_type, graph_summary, scope_summary, current_diagram
         )
 
         try:
@@ -210,6 +293,7 @@ class ModelOrchestrator:
         diagram_type: DiagramType,
         graph_summary: str,
         scope_summary: str,
+        current_diagram: Optional[object] = None,
     ) -> str:
         type_label = (
             diagram_type.value
@@ -217,17 +301,41 @@ class ModelOrchestrator:
             else "none (not yet determined)"
         )
 
-        parts = [
-            f'Transcript delta:\n"{delta}"',
-            f"Current diagram type: {type_label}",
-        ]
+        parts: list[str] = []
 
-        if graph_summary:
-            parts.append(f"Current graph:\n{graph_summary}")
+        # --- New transcript to incorporate ---
+        parts.append(f'New transcript chunk:\n"{delta}"')
+
+        # --- Current diagram type ---
+        parts.append(f"Current diagram type: {type_label}")
+
+        # --- Full previous diagram as JSON (preferred) or text summary ---
+        if current_diagram is not None:
+            try:
+                diagram_json = json.dumps(
+                    current_diagram.model_dump(mode="json"), indent=2
+                )
+                parts.append(f"Previous diagram (JSON):\n{diagram_json}")
+            except Exception:
+                # Fall back to text summary if serialisation fails
+                if graph_summary:
+                    parts.append(f"Previous diagram (summary):\n{graph_summary}")
+                else:
+                    parts.append("Previous diagram: empty (first diagram)")
+        elif graph_summary:
+            parts.append(f"Previous diagram (summary):\n{graph_summary}")
         else:
-            parts.append("Current graph: empty (first diagram)")
+            parts.append("Previous diagram: empty — produce the first diagram.replace.")
 
+        # --- Optional meeting context ---
         if scope_summary:
-            parts.append(f"Meeting context: {scope_summary}")
+            parts.append(
+                f"Meeting context (use for disambiguation, not as nodes):\n{scope_summary}"
+            )
+
+        parts.append(
+            "Return ONLY valid JSON matching the schema. "
+            "Do NOT wrap it in markdown. Do NOT add explanations."
+        )
 
         return "\n\n".join(parts)

@@ -144,28 +144,28 @@ export default function ProcessCanvas() {
       >
         <Background
           variant={BackgroundVariant.Dots}
-          gap={28}
-          size={1}
-          color="var(--mindmesh-dot)"
+          gap={20}
+          size={1.2}
+          color="var(--mindmesh-grid-dot)"
         />
         <Controls position="bottom-right" />
       </ReactFlow>
 
       {/* Mode + connection pill */}
-      <div className="absolute right-4 top-4 z-20 flex items-center gap-2 rounded-full border border-border/60 bg-card/90 px-3 py-1.5 text-[11px] text-muted-foreground shadow-sm backdrop-blur-sm">
+      <div className="absolute right-4 top-4 z-20 flex items-center gap-2 rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-[11px] text-slate-500 shadow-sm backdrop-blur-sm">
         <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} />
         <span>
           {connectionState === "open"
             ? `${state.mode} • ${state.diagramType} • v${state.version}`
             : `mindmesh ${connectionState}`}
         </span>
-        {state.desynced ? <span className="font-medium text-amber-700">desynced</span> : null}
+        {state.desynced ? <span className="font-medium text-amber-600">desynced</span> : null}
       </div>
 
       {/* Empty + desync overlays */}
       {!hasDiagram ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="rounded-lg border border-border/60 bg-card/90 px-4 py-3 text-sm text-muted-foreground shadow-sm backdrop-blur-sm">
+<div className="rounded-2xl border border-slate-200 bg-white/92 px-5 py-3 text-sm text-slate-500 shadow-sm backdrop-blur-sm">
             {connectionState === "open"
               ? "Waiting for diagram events…"
               : `Connecting to backend (${connectionState})…`}
@@ -175,7 +175,7 @@ export default function ProcessCanvas() {
 
       {hasDiagram && state.desynced ? (
         <div className="pointer-events-none absolute inset-0 flex items-end justify-center pb-6">
-          <div className="rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-medium text-amber-800 shadow-sm">
+          <div className="rounded-full border border-amber-200 bg-white px-4 py-2 text-xs font-medium text-amber-600 shadow-sm">
             Out of sync. Waiting for a full diagram replace…
           </div>
         </div>

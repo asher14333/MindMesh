@@ -18,7 +18,7 @@ export default function CanvasControls() {
   return (
     <div className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 md:bottom-6">
       {/* View mode selector */}
-      <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-card/95 p-1 shadow-sm backdrop-blur-sm">
+      <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white/92 p-1 shadow-sm backdrop-blur-sm">
         {viewModes.map((mode) => {
           const Icon = mode.icon
           const isActive = activeView === mode.id
@@ -29,7 +29,7 @@ export default function CanvasControls() {
               className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-all ${
                 isActive
                   ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -43,7 +43,7 @@ export default function CanvasControls() {
       <div className="h-6 w-px bg-border/60" />
 
       {/* Zoom controls */}
-      <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-card/95 p-1 shadow-sm backdrop-blur-sm">
+      <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white/92 p-1 shadow-sm backdrop-blur-sm">
         <Button
           variant="ghost"
           size="icon"
@@ -52,7 +52,7 @@ export default function CanvasControls() {
         >
           <ZoomOut className="h-3.5 w-3.5" />
         </Button>
-        <span className="w-10 text-center text-xs font-medium text-muted-foreground">
+        <span className="w-10 text-center text-xs font-medium text-slate-500">
           {zoom}%
         </span>
         <Button
@@ -75,9 +75,9 @@ export default function CanvasControls() {
       </div>
 
       {/* Live view indicator */}
-      <div className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-card/95 px-2.5 py-1.5 shadow-sm backdrop-blur-sm">
+      <div className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/92 px-2.5 py-1.5 shadow-sm backdrop-blur-sm">
         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-        <span className="text-xs font-medium text-muted-foreground">Live View</span>
+        <span className="text-xs font-medium text-slate-500">Live View</span>
       </div>
     </div>
   )
