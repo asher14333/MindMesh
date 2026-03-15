@@ -7,7 +7,6 @@ import {
   Video,
   VideoOff,
   PhoneOff,
-  MessageSquare,
   Clock,
   Sparkles,
 } from "lucide-react"
@@ -120,17 +119,7 @@ export default function MeetingDockStandby({
           <PhoneOff className="h-[18px] w-[18px]" />
         </Button>
 
-        {/* Divider */}
-        <div className="mx-1 h-6 w-px bg-neutral-200" />
 
-        {/* Chat */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-10 w-10 rounded-full text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
-        >
-          <MessageSquare className="h-[18px] w-[18px]" />
-        </Button>
       </div>
     </div>
   )

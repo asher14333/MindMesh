@@ -1,5 +1,6 @@
 "use client"
 
+import Image from "next/image"
 import { ArrowLeft, Sparkles, Trash2, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useWebRTCContext } from "@/hooks/webrtc-context"
@@ -33,31 +34,14 @@ export default function MeetingBar({ onBack }: MeetingBarProps) {
         )}
 
         {/* Logo */}
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-neutral-100">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                d="M12 2v4m0 12v4M4 12H2m20 0h-2M5.05 5.05l2.83 2.83m8.24 8.24 2.83 2.83M18.95 5.05l-2.83 2.83M7.88 16.12l-2.83 2.83"
-                stroke="#111"
-                strokeWidth="2"
-                strokeLinecap="round"
-              />
-              <circle cx="12" cy="12" r="2.5" fill="#111" />
-            </svg>
-          </div>
-          <span
-            className="hidden text-[15px] font-bold text-neutral-900 sm:block"
-            style={{ letterSpacing: "-0.02em" }}
-          >
-            MindMesh
-          </span>
-        </div>
+        <Image
+          src="/horizontalIconTransparent.png"
+          alt="MindMesh"
+              width={140}
+              height={35}
+          priority
+          style={{ objectFit: "contain" }}
+        />
 
         {/* Divider */}
         <div className="hidden h-5 w-px bg-neutral-200 md:block" />

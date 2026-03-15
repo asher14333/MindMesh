@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import styles from "./landing.module.css";
 
@@ -7,13 +8,14 @@ export default function LandingPage() {
       <div className={styles.shell}>
         <header className={styles.nav}>
           <Link href="/" className={styles.brand} aria-label="MindMesh home">
-            <span className={styles.mark} aria-hidden="true">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 2v4m0 12v4M4 12H2m20 0h-2M5.05 5.05l2.83 2.83m8.24 8.24 2.83 2.83M18.95 5.05l-2.83 2.83M7.88 16.12l-2.83 2.83" stroke="#111" strokeWidth="2" strokeLinecap="round" />
-                <circle cx="12" cy="12" r="2.5" fill="#111" />
-              </svg>
-            </span>
-            <span className={styles.brandText}>MindMesh</span>
+            <Image
+              src="/horizontalIconTransparent.png"
+              alt="MindMesh"
+              width={160}
+              height={42}
+              priority
+              style={{ objectFit: "contain" }}
+            />
           </Link>
           <Link className={`${styles.btn} ${styles.btnDark}`} href="/join">
             Open app
