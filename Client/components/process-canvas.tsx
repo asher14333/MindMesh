@@ -28,10 +28,10 @@ type RFEdge = Edge<DiagramEdgeData>
 
 // ─── Remote cursor overlay ──────────────────────────────────────────────────
 function RemoteCursors() {
-  const { state } = useMindMesh()
+  const { state, userId } = useMindMesh()
   const now = Date.now()
   const cursors = Object.values(state.remoteCursors).filter(
-    (c) => now - c.lastSeen < 5000 // Hide stale cursors (5s timeout)
+    (c) => c.user_id !== userId && now - c.lastSeen < 5000 // Hide own + stale cursors
   )
 
   if (cursors.length === 0) return null
@@ -311,15 +311,25 @@ export default function ProcessCanvas() {
     [sendCursorPosition]
   )
 
-  // ─── Double-click to add node ─────────────────────────────────────────────
-  const onPaneDoubleClick = useCallback(
+  // ─── Double-click pane to add node (using onPaneClick with timing) ──────
+  // React Flow v12 has no onPaneDoubleClick prop, so we detect it manually.
+  const lastPaneClickRef = useRef<{ time: number; x: number; y: number } | null>(null)
+  const onPaneClick = useCallback(
     (event: React.MouseEvent) => {
-      if (!rfInstance) return
-      const position = rfInstance.screenToFlowPosition({
-        x: event.clientX,
-        y: event.clientY,
-      })
-      addNode(position, { label: "New node", kind: "idea" })
+      const now = Date.now()
+      const prev = lastPaneClickRef.current
+      if (prev && now - prev.time < 350 && Math.abs(event.clientX - prev.x) < 10 && Math.abs(event.clientY - prev.y) < 10) {
+        // Double-click detected on pane
+        lastPaneClickRef.current = null
+        if (!rfInstance) return
+        const position = rfInstance.screenToFlowPosition({
+          x: event.clientX,
+          y: event.clientY,
+        })
+        addNode(position, { label: "New node", kind: "idea" })
+      } else {
+        lastPaneClickRef.current = { time: now, x: event.clientX, y: event.clientY }
+      }
     },
     [rfInstance, addNode]
   )
@@ -327,11 +337,13 @@ export default function ProcessCanvas() {
   // ─── Add node via button ─────────────────────────────────────────────────
   const handleAddNode = useCallback(() => {
     if (!rfInstance || !canvasRef.current) return
+    // Calculate center of visible canvas in flow coordinates directly
+    const viewport = rfInstance.getViewport()
     const rect = canvasRef.current.getBoundingClientRect()
-    const position = rfInstance.screenToFlowPosition({
-      x: rect.width / 2,
-      y: rect.height / 2,
-    })
+    const position = {
+      x: (-viewport.x + rect.width / 2) / viewport.zoom,
+      y: (-viewport.y + rect.height / 2) / viewport.zoom,
+    }
     addNode(position, { label: "New node", kind: "idea" })
   }, [rfInstance, addNode])
 
@@ -368,7 +380,7 @@ export default function ProcessCanvas() {
         onSelectionChange={onSelectionChange}
         onNodesDelete={onNodesDelete}
         onEdgesDelete={onEdgesDelete}
-        onDoubleClick={onPaneDoubleClick}
+        onPaneClick={onPaneClick}
         deleteKeyCode={["Backspace", "Delete"]}
         proOptions={{ hideAttribution: true }}
         connectionLineStyle={{ stroke: "var(--mindmesh-edge)", strokeWidth: 2 }}
@@ -414,12 +426,12 @@ export default function ProcessCanvas() {
         </Button>
       </div>
 
-      {/* Connected users count */}
-      {Object.keys(state.remoteCursors).length > 0 && (
+      {/* Connected users count (exclude self) */}
+      {Object.values(state.remoteCursors).some((c) => c.user_id !== userId && Date.now() - c.lastSeen < 5000) && (
         <div className="absolute left-4 top-4 z-20 flex items-center gap-2">
           <div className="flex -space-x-1.5">
             {Object.values(state.remoteCursors)
-              .filter((c) => Date.now() - c.lastSeen < 5000)
+              .filter((c) => c.user_id !== userId && Date.now() - c.lastSeen < 5000)
               .slice(0, 5)
               .map((cursor) => (
                 <div
@@ -433,7 +445,7 @@ export default function ProcessCanvas() {
               ))}
           </div>
           <span className="text-[10px] font-medium text-slate-400">
-            {Object.values(state.remoteCursors).filter((c) => Date.now() - c.lastSeen < 5000).length} online
+            {Object.values(state.remoteCursors).filter((c) => c.user_id !== userId && Date.now() - c.lastSeen < 5000).length} online
           </span>
         </div>
       )}
@@ -443,7 +455,7 @@ export default function ProcessCanvas() {
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="rounded-2xl border border-slate-200 bg-white/92 px-5 py-3 text-sm text-slate-500 shadow-sm backdrop-blur-sm">
             {connectionState === "open"
-              ? "Waiting for diagram events… (double-click to add a node)"
+              ? "Waiting for diagram events… (double-click empty area or use Add Node button)"
               : `Connecting to backend (${connectionState})…`}
           </div>
         </div>

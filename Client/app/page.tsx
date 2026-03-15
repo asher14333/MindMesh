@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic"
 import { useState } from "react"
-import { WebRTCProvider } from "@/hooks/webrtc-context"
+import { WebRTCProvider, useWebRTCContext } from "@/hooks/webrtc-context"
 import { useSpeech } from "@/hooks/use-speech"
 import MeetingBar from "@/components/meeting-bar"
 import MeetingBarStandby from "@/components/meeting-bar-standby"
@@ -16,12 +16,15 @@ const ProcessCanvas = dynamic(() => import("@/components/process-canvas"), {
   ssr: false,
 })
 
-/** Bridges the store's shared transcription state to the Web Speech API */
+/** Bridges the store's shared transcription state to the Web Speech API.
+ *  Also respects mic mute — if the user has muted their mic,
+ *  speech recognition is paused so it doesn't pick up background audio. */
 function MindMeshSpeechBridge() {
   const { send, state } = useMindMesh()
+  const { isMuted } = useWebRTCContext()
 
   useSpeech({
-    active: state.isTranscribing,
+    active: state.isTranscribing && !isMuted,
     send,
     lastTranscript: state.lastTranscript,
   })
