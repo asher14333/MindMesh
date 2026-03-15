@@ -237,21 +237,86 @@ export const ServerEventSchema = z.discriminatedUnion("type", [
   StatusEventSchema,
   ErrorEventSchema,
 ])
-export type ServerEvent = z.infer<typeof ServerEventSchema>
+export type ServerEvent = z.infer<typeof ServerEventSchema> | CollabServerEvent | TranscriptionToggleEvent | SessionInfoEvent
 
 export function parseServerEvent(raw: unknown): ServerEvent | null {
+  // Try lightweight event types first (collab + transcription toggle)
+  if (raw && typeof raw === "object" && "type" in raw) {
+    const r = raw as Record<string, unknown>
+    if (r.type === "collab.cursor") return raw as CollabCursorEvent
+    if (r.type === "collab.selection") return raw as CollabSelectionEvent
+    if (r.type === "collab.edit") return raw as CollabEditEvent
+    if (r.type === "transcription.toggle") return raw as TranscriptionToggleEvent
+    if (r.type === "session.info") return raw as SessionInfoEvent
+  }
   const parsed = ServerEventSchema.safeParse(raw)
   if (!parsed.success) return null
   return parsed.data
 }
 
-// Minimal inbound client events used to make the demo “go”.
+// ─── Canvas edit patch (user-driven edits sent to server) ───────────────────
+export type CanvasEditOp =
+  | { op: "update_node"; id: string; changes: Partial<DiagramNodeData> & { position?: { x: number; y: number } } }
+  | { op: "add_node"; id: string; position: { x: number; y: number }; data: DiagramNodeData }
+  | { op: "remove_node"; id: string }
+  | { op: "add_edge"; id: string; source: string; target: string }
+  | { op: "remove_edge"; id: string }
+
+// ─── Collaboration events ───────────────────────────────────────────────────
+export type CursorPosition = {
+  x: number
+  y: number
+}
+
+export type CollabCursorEvent = {
+  type: "collab.cursor"
+  user_id: string
+  user_name: string
+  position: CursorPosition
+  color: string
+}
+
+export type CollabSelectionEvent = {
+  type: "collab.selection"
+  user_id: string
+  user_name: string
+  node_id: string | null
+  color: string
+}
+
+export type CollabEditEvent = {
+  type: "collab.edit"
+  user_id: string
+  ops: CanvasEditOp[]
+}
+
+export type CollabServerEvent = CollabCursorEvent | CollabSelectionEvent | CollabEditEvent
+
+// Transcription toggle (shared across all users)
+export type TranscriptionToggleEvent = {
+  type: "transcription.toggle"
+  enabled: boolean
+  user_id: string
+  user_name: string
+}
+
+// Session info (sent once per connection so all clients share the same timer)
+export type SessionInfoEvent = {
+  type: "session.info"
+  started_at: number  // epoch milliseconds
+}
+
+// Minimal inbound client events used to make the demo "go".
 export type ClientEvent =
   | { type: "session.start"; meeting_title?: string | null }
   | { type: "session.stop" }
   | { type: "speech.partial"; text: string; speaker?: string | null }
   | { type: "speech.final"; text: string; speaker?: string | null }
   | { type: "ui.command"; command: string; payload?: Record<string, unknown> }
+  | { type: "canvas.edit"; ops: CanvasEditOp[] }
+  | { type: "collab.cursor"; user_id: string; user_name: string; position: CursorPosition; color: string }
+  | { type: "collab.selection"; user_id: string; user_name: string; node_id: string | null; color: string }
+  | TranscriptionToggleEvent
 
 export function buildMindMeshBaseWsUrl(): string {
   return (process.env.NEXT_PUBLIC_MINDMESH_WS_URL ?? "ws://localhost:8000")

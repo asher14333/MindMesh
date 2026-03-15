@@ -30,10 +30,19 @@ function summarizeClientEvent(payload: ClientEvent): string {
       return `${payload.type} speaker=${payload.speaker ?? "-"} len=${payload.text.length} text=${JSON.stringify(payload.text)}`
     case "ui.command":
       return `ui.command command=${payload.command} payload=${JSON.stringify(payload.payload ?? {})}`
+    case "canvas.edit":
+      return `canvas.edit ops=${payload.ops.length}`
+    case "collab.cursor":
+      return `collab.cursor user=${payload.user_id}`
+    case "collab.selection":
+      return `collab.selection user=${payload.user_id} node=${payload.node_id}`
+    case "transcription.toggle":
+      return `transcription.toggle enabled=${payload.enabled} user=${payload.user_name}`
   }
 }
 
 function summarizeServerEvent(event: ServerEvent): string {
+  if (!event || typeof event !== "object" || !("type" in event)) return "unknown"
   switch (event.type) {
     case "status":
       return `status mode=${event.mode} message=${event.message} diagram_type=${event.diagram_type ?? "null"}`
@@ -47,6 +56,18 @@ function summarizeServerEvent(event: ServerEvent): string {
       return `diagram.patch base=${event.patch.base_version} version=${event.patch.version} ops=${event.patch.ops.length}`
     case "error":
       return `error message=${event.message}`
+    case "collab.cursor":
+      return `collab.cursor user=${event.user_id}`
+    case "collab.selection":
+      return `collab.selection user=${event.user_id} node=${event.node_id}`
+    case "collab.edit":
+      return `collab.edit ops=${event.ops.length}`
+    case "transcription.toggle":
+      return `transcription.toggle enabled=${event.enabled} user=${event.user_name}`
+    case "session.info":
+      return `session.info started_at=${event.started_at}`
+    default:
+      return `unknown event type`
   }
 }
 

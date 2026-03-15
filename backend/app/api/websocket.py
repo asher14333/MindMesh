@@ -5,9 +5,14 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.session_manager import SessionManager
 from app.schemas.events import (
+    CanvasEditEvent,
+    CollabCursorEvent,
+    CollabSelectionEvent,
     DiagramReplaceEvent,
     ErrorEvent,
+    SessionInfoEvent,
     StatusEvent,
+    TranscriptionToggleEvent,
     UICommandEvent,
     parse_inbound_event,
 )
@@ -154,6 +159,12 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
             diagram_type=state.diagram_type,
         ).model_dump(mode="json")
     )
+    # Send session start time so all clients show a consistent timer
+    await websocket.send_json(
+        SessionInfoEvent(
+            started_at=state.started_at * 1000,  # convert seconds → ms for JS Date.now()
+        ).model_dump(mode="json")
+    )
     if state.diagram.nodes:
         logger.info(
             "Session %s hydrating client with diagram version=%d nodes=%d",
@@ -197,6 +208,28 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
                 )
                 continue
             logger.info("[%s] ws.recv %s", session_id, _summarize_inbound_event(event))
+
+            # --- broadcast-only events (collab + canvas edits + transcription) ---
+            if isinstance(event, (CollabCursorEvent, CollabSelectionEvent)):
+                payload = event.model_dump(mode="json")
+                await session_manager.broadcast(session_id, payload, exclude=websocket)
+                continue
+
+            if isinstance(event, TranscriptionToggleEvent):
+                # Broadcast to ALL clients (including sender) so everyone syncs
+                payload = event.model_dump(mode="json")
+                await session_manager.broadcast(session_id, payload)
+                continue
+
+            if isinstance(event, CanvasEditEvent):
+                # Broadcast the edit as a collab.edit event to other clients
+                collab_payload = {
+                    "type": "collab.edit",
+                    "user_id": "",  # will be populated by client
+                    "ops": event.ops,
+                }
+                await session_manager.broadcast(session_id, collab_payload, exclude=websocket)
+                continue
 
             # --- pipeline ---
             try:

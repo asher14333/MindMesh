@@ -9,25 +9,28 @@ import {
   PhoneOff,
   Clock,
   Sparkles,
+  AudioLines,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useWebRTCContext } from "@/hooks/webrtc-context"
+import { useMindMesh } from "@/lib/mindmesh/store"
 
 interface MeetingDockStandbyProps {
   onActivate: () => void
   onLeave?: () => void
 }
 
-/** Simple elapsed-time counter (HH:MM:SS). */
-function useElapsedTime() {
-  const [seconds, setSeconds] = useState(0)
+/** Elapsed-time counter driven by a shared start timestamp (HH:MM:SS). */
+function useElapsedTime(startTime: number) {
+  const [, tick] = useState(0)
   useEffect(() => {
-    const id = setInterval(() => setSeconds((s) => s + 1), 1000)
+    const id = setInterval(() => tick((t) => t + 1), 1000)
     return () => clearInterval(id)
   }, [])
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = seconds % 60
+  const totalSeconds = Math.max(0, Math.floor((Date.now() - startTime) / 1000))
+  const h = Math.floor(totalSeconds / 3600)
+  const m = Math.floor((totalSeconds % 3600) / 60)
+  const s = totalSeconds % 60
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
 }
 
@@ -37,7 +40,9 @@ export default function MeetingDockStandby({
 }: MeetingDockStandbyProps) {
   const { isMuted, isCameraOn, toggleMic, toggleCamera, leaveCall } =
     useWebRTCContext()
-  const elapsed = useElapsedTime()
+  const { state, toggleTranscription, sessionStartedAt } = useMindMesh()
+  const elapsed = useElapsedTime(sessionStartedAt)
+  const isListening = state.isTranscribing
 
   function handleLeave() {
     leaveCall()
@@ -99,6 +104,37 @@ export default function MeetingDockStandby({
           )}
         </Button>
 
+        {/* Divider */}
+        <div className="mx-1 h-6 w-px bg-neutral-200" />
+
+        {/* Speech-to-Text Toggle */}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={toggleTranscription}
+          title={isListening ? "Stop transcription" : "Start transcription"}
+          className={`h-10 w-10 rounded-full transition-all ${
+            isListening
+              ? "bg-emerald-50 text-emerald-600 hover:bg-emerald-100 ring-2 ring-emerald-200"
+              : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+          }`}
+        >
+          <AudioLines className={`h-[18px] w-[18px] ${isListening ? "animate-pulse" : ""}`} />
+        </Button>
+
+        {/* Speech indicator */}
+        {isListening && (
+          <div className="flex items-center gap-1.5 px-1">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+            <span className="text-[10px] font-medium text-emerald-600">
+              Transcribing
+            </span>
+          </div>
+        )}
+
+        {/* Divider */}
+        <div className="mx-1 h-6 w-px bg-neutral-200" />
+
         {/* ── Open Canvas (primary action) ── */}
         <Button
           onClick={onActivate}
@@ -118,8 +154,6 @@ export default function MeetingDockStandby({
         >
           <PhoneOff className="h-[18px] w-[18px]" />
         </Button>
-
-
       </div>
     </div>
   )

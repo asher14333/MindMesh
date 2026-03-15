@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic"
 import { useState } from "react"
-import { WebRTCProvider } from "@/hooks/webrtc-context"
+import { WebRTCProvider, useWebRTCContext } from "@/hooks/webrtc-context"
 import { useSpeech } from "@/hooks/use-speech"
 import MeetingBar from "@/components/meeting-bar"
 import MeetingBarStandby from "@/components/meeting-bar-standby"
@@ -16,11 +16,15 @@ const ProcessCanvas = dynamic(() => import("@/components/process-canvas"), {
   ssr: false,
 })
 
-function MindMeshSpeechBridge({ active }: { active: boolean }) {
+/** Bridges the store's shared transcription state to the Web Speech API.
+ *  Also respects mic mute — if the user has muted their mic,
+ *  speech recognition is paused so it doesn't pick up background audio. */
+function MindMeshSpeechBridge() {
   const { send, state } = useMindMesh()
+  const { isMuted } = useWebRTCContext()
 
   useSpeech({
-    active,
+    active: state.isTranscribing && !isMuted,
     send,
     lastTranscript: state.lastTranscript,
   })
@@ -47,7 +51,7 @@ export default function MindMeshDemo() {
         <p className="text-lg font-medium text-neutral-900">You left the call</p>
         <button
           onClick={() => { setCallEnded(false); setMindMeshActive(false) }}
-          className="rounded-lg border border-neutral-200 bg-white px-4 py-2 text-sm font-semibold text-neutral-700 hover:bg-neutral-50 transition-colors"
+          className="cursor-pointer rounded-lg border border-neutral-200 bg-white px-4 py-2 text-sm font-semibold text-neutral-700 hover:bg-neutral-50 transition-colors"
         >
           Rejoin
         </button>
@@ -62,7 +66,7 @@ export default function MindMeshDemo() {
         meetingTitle={MEETING_TITLE}
         visualizingEnabled={mindMeshActive}
       >
-        <MindMeshSpeechBridge active />
+        <MindMeshSpeechBridge />
         {!mindMeshActive ? (
           <div className="flex h-screen flex-col bg-white">
             <MeetingBarStandby />

@@ -129,8 +129,8 @@
   --mindmesh-canvas-bg: #f8fafc;
   --mindmesh-grid-dot: rgba(100, 116, 139, 0.18);
   --mindmesh-grid-line: rgba(148, 163, 184, 0.12);
-  --mindmesh-edge: #cbd5e1;
-  --mindmesh-edge-selected: #94a3b8;
+  --mindmesh-edge: #000000;
+  --mindmesh-edge-selected: #000000;
 
   position: relative;
   background-color: var(--mindmesh-canvas-bg);
