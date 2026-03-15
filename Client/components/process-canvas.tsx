@@ -13,14 +13,18 @@ import { Button } from "@/components/ui/button"
 
 function DevDebugPanel({
   state,
-  onReset,
-  onReplaySample,
+  connectionState,
+  onResetDiagram,
+  onRunDemoScript,
 }: {
   state: MindMeshState
-  onReset: () => void
-  onReplaySample: () => void
+  connectionState: string
+  onResetDiagram: () => boolean
+  onRunDemoScript: () => void
 }) {
   const last = state.recentEvents[state.recentEvents.length - 1]
+  const isConnected = connectionState === "open"
+
   return (
     <div className="absolute left-4 top-4 z-30 w-[320px] rounded-lg border border-border/60 bg-card/90 p-3 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
       <div className="flex items-center justify-between">
@@ -32,13 +36,28 @@ function DevDebugPanel({
         <div>diagram: {state.diagramType}</div>
         <div>desynced: {String(state.desynced)}</div>
         <div>last: {last?.summary ?? "none"}</div>
+        {state.lastError ? (
+          <div className="font-medium text-red-600">error: {state.lastError.message}</div>
+        ) : null}
       </div>
       <div className="mt-3 flex items-center gap-2">
-        <Button size="sm" variant="secondary" className="h-7 px-2 text-[11px]" onClick={onReplaySample}>
-          Replay Sample
+        <Button
+          size="sm"
+          variant="secondary"
+          className="h-7 px-2 text-[11px]"
+          onClick={onRunDemoScript}
+          disabled={!isConnected}
+        >
+          Run Demo Script
         </Button>
-        <Button size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={onReset}>
-          Reset
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 px-2 text-[11px]"
+          onClick={onResetDiagram}
+          disabled={!isConnected}
+        >
+          Reset Diagram
         </Button>
       </div>
     </div>
@@ -128,7 +147,12 @@ export default function ProcessCanvas() {
       ) : null}
 
       {process.env.NEXT_PUBLIC_MINDMESH_DEBUG === "1" ? (
-        <DevDebugPanel state={state} onReplaySample={debug.replaySample} onReset={debug.reset} />
+        <DevDebugPanel
+          state={state}
+          connectionState={connectionState}
+          onResetDiagram={debug.resetDiagram}
+          onRunDemoScript={debug.runDemoScript}
+        />
       ) : null}
     </div>
   )

@@ -1,7 +1,7 @@
 "use client"
 
 import dynamic from "next/dynamic"
-import { useRef, useState } from "react"
+import { useState } from "react"
 import { WebRTCProvider } from "@/hooks/webrtc-context"
 import { useSpeech } from "@/hooks/use-speech"
 import MeetingBar from "@/components/meeting-bar"
@@ -10,17 +10,22 @@ import ParticipantStrip from "@/components/participant-strip"
 import MeetingDock from "@/components/meeting-dock"
 import MeetingStage from "@/components/meeting-stage"
 import MeetingDockStandby from "@/components/meeting-dock-standby"
-import { MindMeshProvider } from "@/lib/mindmesh/store"
+import { MindMeshProvider, useMindMesh } from "@/lib/mindmesh/store"
 
 const ProcessCanvas = dynamic(() => import("@/components/process-canvas"), {
   ssr: false,
 })
 
-function createSessionId() {
-  // Stable per-tab session id (in-memory). Helps avoid cross-tab conflicts while still
-  // keeping a consistent session across re-renders.
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID()
-  return `mm-${Math.random().toString(16).slice(2)}-${Date.now().toString(16)}`
+function MindMeshSpeechBridge({ active }: { active: boolean }) {
+  const { send, state } = useMindMesh()
+
+  useSpeech({
+    active,
+    send,
+    lastTranscript: state.lastTranscript,
+  })
+
+  return null
 }
 
 const ROOM_ID = "demo-room"
@@ -29,12 +34,6 @@ const MEETING_TITLE = "Enterprise Customer Onboarding Approval Flow"
 export default function MindMeshDemo() {
   const [mindMeshActive, setMindMeshActive] = useState(false)
   const [callEnded, setCallEnded] = useState(false)
-  const sessionIdRef = useRef<string>(createSessionId())
-
-  // Active on both standby and MindMesh views — logs speech to the browser
-  // console and pipes transcripts to the backend diagram pipeline.
-  // Diagram generation is only enabled when mindMeshActive is true.
-  useSpeech(sessionIdRef.current, !callEnded, mindMeshActive)
 
   if (callEnded) {
     return (
@@ -52,19 +51,24 @@ export default function MindMeshDemo() {
 
   return (
     <WebRTCProvider roomId={ROOM_ID} userId="You">
-      {!mindMeshActive ? (
-        <div className="flex h-screen flex-col bg-background">
-          <MeetingBarStandby />
-          <main className="relative flex-1 overflow-hidden">
-            <MeetingStage />
-            <MeetingDockStandby
-              onActivate={() => setMindMeshActive(true)}
-              onLeave={() => setCallEnded(true)}
-            />
-          </main>
-        </div>
-      ) : (
-        <MindMeshProvider sessionId={sessionIdRef.current} meetingTitle={MEETING_TITLE}>
+      <MindMeshProvider
+        sessionId={ROOM_ID}
+        meetingTitle={MEETING_TITLE}
+        visualizingEnabled={mindMeshActive}
+      >
+        <MindMeshSpeechBridge active />
+        {!mindMeshActive ? (
+          <div className="flex h-screen flex-col bg-background">
+            <MeetingBarStandby />
+            <main className="relative flex-1 overflow-hidden">
+              <MeetingStage />
+              <MeetingDockStandby
+                onActivate={() => setMindMeshActive(true)}
+                onLeave={() => setCallEnded(true)}
+              />
+            </main>
+          </div>
+        ) : (
           <div className="flex h-screen flex-col bg-background">
             <MeetingBar />
             <ParticipantStrip />
@@ -73,8 +77,8 @@ export default function MindMeshDemo() {
               <MeetingDock onLeave={() => setCallEnded(true)} />
             </main>
           </div>
-        </MindMeshProvider>
-      )}
+        )}
+      </MindMeshProvider>
     </WebRTCProvider>
   )
 }

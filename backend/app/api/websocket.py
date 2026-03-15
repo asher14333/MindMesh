@@ -11,6 +11,27 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+SESSION_BROADCAST_TYPES = {
+    "status",
+    "transcript.update",
+    "intent.result",
+    "diagram.replace",
+    "diagram.patch",
+}
+
+
+async def _send_outbound_events(
+    session_id: str,
+    websocket: WebSocket,
+    session_manager: "SessionManager",
+    outbound_events: list,
+) -> None:
+    for event in outbound_events:
+        payload = event.model_dump(mode="json")
+        await websocket.send_json(payload)
+        if payload.get("type") in SESSION_BROADCAST_TYPES:
+            await session_manager.broadcast(session_id, payload, exclude=websocket)
+
 
 async def _pause_watcher(
     session_id: str,
@@ -36,8 +57,12 @@ async def _pause_watcher(
                 if not pipeline.trigger_engine.check_pause(state, unread):
                     continue
                 outbound_events = await pipeline.handle_event(state=state, event=synthetic)
-            for ev in outbound_events:
-                await websocket.send_json(ev.model_dump(mode="json"))
+            await _send_outbound_events(
+                session_id=session_id,
+                websocket=websocket,
+                session_manager=session_manager,
+                outbound_events=outbound_events,
+            )
         except asyncio.CancelledError:
             return
         except Exception:
@@ -91,14 +116,12 @@ async def session_websocket(websocket: WebSocket, session_id: str) -> None:
                 async with session_manager.session_lock(session_id):
                     state = await session_manager.get_or_create(session_id=session_id)
                     outbound_events = await pipeline.handle_event(state=state, event=event)
-                for outbound_event in outbound_events:
-                    payload = outbound_event.model_dump(mode="json")
-                    # Send back to the sender
-                    await websocket.send_json(payload)
-                    # Broadcast transcript.update to everyone else in the session
-                    # so all clients see each other's speech labeled by speaker
-                    if payload.get("type") == "transcript.update":
-                        await session_manager.broadcast(session_id, payload, exclude=websocket)
+                await _send_outbound_events(
+                    session_id=session_id,
+                    websocket=websocket,
+                    session_manager=session_manager,
+                    outbound_events=outbound_events,
+                )
             except Exception as exc:
                 logger.exception("Pipeline error for session %s", session_id)
                 try:

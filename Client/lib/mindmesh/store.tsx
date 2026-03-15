@@ -15,8 +15,11 @@ import type {
   ClientEvent,
   DiagramDocument,
   DiagramEdge,
+  DiagramEdgeData,
   DiagramNode,
+  DiagramNodeData,
   DiagramPatch,
+  ErrorEvent,
   PatchOp,
   ServerEvent,
   SessionMode,
@@ -26,16 +29,9 @@ import type {
   DiagramType,
 } from "@/lib/mindmesh/events"
 import { useMindMeshWebSocket, type ConnectionState } from "@/hooks/use-mindmesh-websocket"
-import { SAMPLE_SERVER_EVENTS } from "@/lib/mindmesh/sample-events"
 
-type RFNodeData = {
-  label: string
-  kind?: string
-  status?: string | null
-}
-
-type RFNode = Node<RFNodeData>
-type RFEdge = Edge
+type RFNode = Node<DiagramNodeData>
+type RFEdge = Edge<DiagramEdgeData>
 
 type RecentEventSummary = {
   at: number
@@ -52,6 +48,7 @@ export type MindMeshState = {
   lastStatus: StatusEvent | null
   lastIntent: IntentResultEvent | null
   lastTranscript: TranscriptUpdateEvent | null
+  lastError: ErrorEvent | null
   lastReplaceVersion: number | null
   recentEvents: RecentEventSummary[]
 }
@@ -61,57 +58,73 @@ type MindMeshContextValue = {
   connectionState: ConnectionState
   send: (payload: ClientEvent) => boolean
   debug: {
-    reset: () => void
-    replaySample: () => void
-    injectServerEvent: (event: ServerEvent) => void
+    resetDiagram: () => boolean
+    runDemoScript: () => void
   }
 }
 
 const MindMeshContext = createContext<MindMeshContextValue | null>(null)
 
-export function useMindMesh() {
-  const ctx = useContext(MindMeshContext)
-  if (!ctx) throw new Error("useMindMesh must be used within <MindMeshProvider />")
-  return ctx
+const DEMO_TRANSCRIPT_LINES = [
+  "First sales hands off the deal to solutions engineering.",
+  "Then security reviews the integration requirements.",
+  "After security sign-off, legal approves the MSA.",
+  "Finally provisioning starts and customer success is notified.",
+]
+
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key)
 }
 
-const POSITION_SCALE_X = 1.35
-const POSITION_SCALE_Y = 1.15
+function normalizeNodeData(
+  base: Partial<DiagramNodeData> | undefined,
+  patch: Partial<DiagramNodeData> | undefined,
+  legacy: { label?: string; kind?: string; status?: string | null } = {}
+): DiagramNodeData {
+  const next = {
+    ...base,
+    ...patch,
+    ...(legacy.label !== undefined ? { label: legacy.label } : {}),
+    ...(legacy.kind !== undefined ? { kind: legacy.kind } : {}),
+    ...(legacy.status !== undefined ? { status: legacy.status } : {}),
+  }
 
-function scalePosition(pos: { x: number; y: number }) {
   return {
-    x: pos.x * POSITION_SCALE_X,
-    y: pos.y * POSITION_SCALE_Y,
+    label: next.label ?? "Untitled step",
+    kind: next.kind ?? "step",
+    status: next.status ?? null,
+    description: next.description ?? null,
+    lane: next.lane ?? null,
+    actor: next.actor ?? null,
+    time_label: next.time_label ?? null,
+    confidence: next.confidence ?? null,
+    source_span: next.source_span ?? null,
+    metadata: next.metadata ?? {},
   }
 }
 
-function toRFNode(n: DiagramNode): RFNode {
-  const pos = scalePosition({ x: n.position?.x ?? 0, y: n.position?.y ?? 0 })
+function toRFNode(node: DiagramNode): RFNode {
   return {
-    id: n.id,
-    type: "default",
+    ...node,
+    type: node.type ?? "default",
     className: "mindmesh-node",
-    position: {
-      x: pos.x,
-      y: pos.y,
-    },
+    hidden: node.hidden ?? false,
+    parentId: node.parentId ?? undefined,
+    position: node.position ?? { x: 0, y: 0 },
     targetPosition: HandlePosition.Left,
     sourcePosition: HandlePosition.Right,
-    data: {
-      label: n.label,
-      kind: n.kind,
-      status: n.status ?? null,
-    },
+    data: normalizeNodeData(undefined, node.data),
   }
 }
 
-function toRFEdge(e: DiagramEdge): RFEdge {
+function toRFEdge(edge: DiagramEdge): RFEdge {
   return {
-    id: e.id,
-    source: e.source,
-    target: e.target,
-    label: e.label ?? undefined,
-    type: "smoothstep",
+    ...edge,
+    type: edge.type === "default" ? "smoothstep" : edge.type,
+    hidden: edge.hidden ?? false,
+    animated: edge.animated ?? false,
+    label: edge.label ?? undefined,
+    data: edge.data ?? {},
     markerEnd: { type: MarkerType.ArrowClosed, color: "var(--mindmesh-edge)" },
     style: { stroke: "var(--mindmesh-edge)", strokeWidth: 1.5 },
   }
@@ -119,25 +132,20 @@ function toRFEdge(e: DiagramEdge): RFEdge {
 
 function summarizeEvent(event: ServerEvent): string {
   switch (event.type) {
-    case "status": {
+    case "status":
       return `status mode=${event.mode} diagram_type=${event.diagram_type ?? "null"}`
-    }
-    case "transcript.update": {
+    case "transcript.update":
       return `transcript.update final=${event.is_final} len=${event.text.length}`
-    }
     case "intent.result": {
-      const r = event.result
-      return `intent ${r.diagram_type} action=${r.action} conf=${r.confidence.toFixed(2)}`
+      const result = event.result
+      return `intent ${result.diagram_type} action=${result.action} conf=${result.confidence.toFixed(2)}`
     }
-    case "diagram.replace": {
+    case "diagram.replace":
       return `replace v=${event.diagram.version} nodes=${event.diagram.nodes.length} edges=${event.diagram.edges.length}`
-    }
-    case "diagram.patch": {
-      return `patch v=${event.patch.version} ops=${event.patch.ops.length} reason=${event.patch.reason ?? ""}`.trim()
-    }
-    default: {
-      return (event as { type: string }).type
-    }
+    case "diagram.patch":
+      return `patch v=${event.patch.version} base=${event.patch.base_version} ops=${event.patch.ops.length}`
+    case "error":
+      return `error ${event.message}`
   }
 }
 
@@ -149,10 +157,10 @@ function pushRecent(recent: RecentEventSummary[], summary: RecentEventSummary): 
 
 function applyReplace(state: MindMeshState, diagram: DiagramDocument): MindMeshState {
   const nodesById: Record<string, RFNode> = {}
-  for (const n of diagram.nodes) nodesById[n.id] = toRFNode(n)
+  for (const node of diagram.nodes) nodesById[node.id] = toRFNode(node)
 
   const edgesById: Record<string, RFEdge> = {}
-  for (const e of diagram.edges) edgesById[e.id] = toRFEdge(e)
+  for (const edge of diagram.edges) edgesById[edge.id] = toRFEdge(edge)
 
   return {
     ...state,
@@ -173,28 +181,31 @@ function applyPatchOp(
   switch (op.op) {
     case "add_node":
     case "update_node": {
-      const data = op.data as Partial<DiagramNode> & { id: string }
-      const id = data.id
-      const prev = nodesById[id]
-
-      const hasStatus = Object.prototype.hasOwnProperty.call(data, "status")
-      const nextStatus = hasStatus ? (data.status ?? null) : prev?.data?.status ?? null
-
-      const nextData = {
-        label: data.label ?? prev?.data?.label ?? id,
-        kind: data.kind ?? prev?.data?.kind,
-        status: nextStatus,
+      const data = op.data as Partial<DiagramNode> & {
+        id: string
+        label?: string
+        kind?: string
+        status?: string | null
       }
+      const previous = nodesById[data.id]
+      const nextData = normalizeNodeData(previous?.data, data.data, {
+        label: data.label,
+        kind: data.kind,
+        status: data.status,
+      })
 
-      nodesById[id] = {
-        id,
-        type: prev?.type ?? "default",
-        className: prev?.className ?? "mindmesh-node",
-        position: data.position
-          ? scalePosition({ x: data.position.x, y: data.position.y })
-          : prev?.position ?? { x: 0, y: 0 },
-        targetPosition: prev?.targetPosition ?? HandlePosition.Left,
-        sourcePosition: prev?.sourcePosition ?? HandlePosition.Right,
+      nodesById[data.id] = {
+        ...previous,
+        id: data.id,
+        type: data.type ?? previous?.type ?? "default",
+        className: previous?.className ?? "mindmesh-node",
+        position: data.position ?? previous?.position ?? { x: 0, y: 0 },
+        hidden: hasOwn(data, "hidden") ? Boolean(data.hidden) : (previous?.hidden ?? false),
+        parentId: hasOwn(data, "parentId")
+          ? data.parentId ?? undefined
+          : previous?.parentId,
+        sourcePosition: previous?.sourcePosition ?? HandlePosition.Right,
+        targetPosition: previous?.targetPosition ?? HandlePosition.Left,
         data: nextData,
       }
       return
@@ -202,27 +213,36 @@ function applyPatchOp(
     case "remove_node": {
       const id = (op.data as { id: string }).id
       delete nodesById[id]
-      for (const [edgeId, e] of Object.entries(edgesById)) {
-        if (e.source === id || e.target === id) delete edgesById[edgeId]
+      for (const [edgeId, edge] of Object.entries(edgesById)) {
+        if (edge.source === id || edge.target === id) delete edgesById[edgeId]
       }
       return
     }
     case "add_edge":
     case "update_edge": {
       const data = op.data as Partial<DiagramEdge> & { id: string }
-      const id = data.id
-      const prev = edgesById[id]
+      const previous = edgesById[data.id]
+      const nextData = {
+        ...(previous?.data ?? {}),
+        ...(data.data ?? {}),
+      }
 
-      // For add_edge, backend should provide source/target. If missing, we keep previous.
-      const hasLabel = Object.prototype.hasOwnProperty.call(data, "label")
-      edgesById[id] = {
-        id,
-        type: prev?.type ?? "smoothstep",
-        source: data.source ?? prev?.source ?? "",
-        target: data.target ?? prev?.target ?? "",
-        label: hasLabel ? (data.label ?? undefined) : prev?.label,
-        markerEnd: prev?.markerEnd ?? { type: MarkerType.ArrowClosed, color: "var(--mindmesh-edge)" },
-        style: prev?.style ?? { stroke: "var(--mindmesh-edge)", strokeWidth: 1.5 },
+      edgesById[data.id] = {
+        ...previous,
+        id: data.id,
+        source: data.source ?? previous?.source ?? "",
+        target: data.target ?? previous?.target ?? "",
+        type: data.type
+          ? data.type === "default"
+            ? "smoothstep"
+            : data.type
+          : (previous?.type ?? "smoothstep"),
+        hidden: hasOwn(data, "hidden") ? Boolean(data.hidden) : (previous?.hidden ?? false),
+        animated: hasOwn(data, "animated") ? Boolean(data.animated) : (previous?.animated ?? false),
+        label: hasOwn(data, "label") ? (data.label ?? undefined) : previous?.label,
+        data: nextData,
+        markerEnd: previous?.markerEnd ?? { type: MarkerType.ArrowClosed, color: "var(--mindmesh-edge)" },
+        style: previous?.style ?? { stroke: "var(--mindmesh-edge)", strokeWidth: 1.5 },
       }
       return
     }
@@ -235,10 +255,8 @@ function applyPatchOp(
 }
 
 function applyPatch(state: MindMeshState, patch: DiagramPatch): MindMeshState {
-  // Once we're desynced, we only recover via a full replace.
   if (state.desynced) return state
-
-  if (patch.version !== state.version + 1) {
+  if (patch.base_version !== state.version) {
     return { ...state, desynced: true }
   }
 
@@ -256,9 +274,7 @@ function applyPatch(state: MindMeshState, patch: DiagramPatch): MindMeshState {
   }
 }
 
-type Action =
-  | { type: "server.event"; event: ServerEvent }
-  | { type: "debug.reset" }
+type Action = { type: "server.event"; event: ServerEvent }
 
 const initialState: MindMeshState = {
   mode: "standby",
@@ -270,15 +286,13 @@ const initialState: MindMeshState = {
   lastStatus: null,
   lastIntent: null,
   lastTranscript: null,
+  lastError: null,
   lastReplaceVersion: null,
   recentEvents: [],
 }
 
 function reducer(state: MindMeshState, action: Action): MindMeshState {
-  if (action.type === "debug.reset") return initialState
-
   const { event } = action
-
   const withRecent = {
     ...state,
     recentEvents: pushRecent(state.recentEvents, {
@@ -288,39 +302,59 @@ function reducer(state: MindMeshState, action: Action): MindMeshState {
   }
 
   switch (event.type) {
-    case "status": {
+    case "status":
       return {
         ...withRecent,
         lastStatus: event,
         mode: event.mode,
         diagramType: event.diagram_type ?? withRecent.diagramType,
       }
-    }
-    case "transcript.update": {
-      return { ...withRecent, lastTranscript: event }
-    }
-    case "intent.result": {
-      return { ...withRecent, lastIntent: event }
-    }
-    case "diagram.replace": {
+    case "transcript.update":
+      return {
+        ...withRecent,
+        lastTranscript: event,
+      }
+    case "intent.result":
+      return {
+        ...withRecent,
+        lastIntent: event,
+      }
+    case "diagram.replace":
       return applyReplace(withRecent, event.diagram)
-    }
-    case "diagram.patch": {
+    case "diagram.patch":
       return applyPatch(withRecent, event.patch)
-    }
+    case "error":
+      return {
+        ...withRecent,
+        lastError: event,
+      }
   }
 }
 
 type ProviderProps = {
   sessionId: string
   meetingTitle?: string
+  visualizingEnabled: boolean
   children: React.ReactNode
 }
 
-export function MindMeshProvider({ sessionId, meetingTitle, children }: ProviderProps) {
-  const [state, dispatch] = useReducer(reducer, initialState)
+export function useMindMesh() {
+  const ctx = useContext(MindMeshContext)
+  if (!ctx) throw new Error("useMindMesh must be used within <MindMeshProvider />")
+  return ctx
+}
 
-  const injectServerEvent = useCallback((event: ServerEvent) => {
+export function MindMeshProvider({
+  sessionId,
+  meetingTitle,
+  visualizingEnabled,
+  children,
+}: ProviderProps) {
+  const [state, dispatch] = useReducer(reducer, initialState)
+  const demoTimersRef = useRef<number[]>([])
+  const requestedVisualizingRef = useRef(false)
+
+  const onServerEvent = useCallback((event: ServerEvent) => {
     if (event.type === "diagram.patch" || event.type === "diagram.replace") {
       startTransition(() => dispatch({ type: "server.event", event }))
       return
@@ -328,65 +362,85 @@ export function MindMeshProvider({ sessionId, meetingTitle, children }: Provider
     dispatch({ type: "server.event", event })
   }, [])
 
-  const isMockMode = process.env.NEXT_PUBLIC_MINDMESH_MOCK === "1"
-
-  const replayTimersRef = useRef<number[]>([])
-  const clearReplayTimers = useCallback(() => {
-    for (const t of replayTimersRef.current) window.clearTimeout(t)
-    replayTimersRef.current = []
+  const clearDemoTimers = useCallback(() => {
+    for (const timer of demoTimersRef.current) window.clearTimeout(timer)
+    demoTimersRef.current = []
   }, [])
-
-  const reset = useCallback(() => {
-    clearReplayTimers()
-    dispatch({ type: "debug.reset" })
-  }, [clearReplayTimers])
-
-  const replaySample = useCallback(() => {
-    reset()
-
-    let delayMs = 50
-    for (const event of SAMPLE_SERVER_EVENTS) {
-      const t = window.setTimeout(() => injectServerEvent(event), delayMs)
-      replayTimersRef.current.push(t)
-      // Slightly slower spacing for diagram events so you can see patching happen.
-      delayMs += event.type.startsWith("diagram.") ? 700 : 250
-    }
-  }, [injectServerEvent, reset])
 
   const { connectionState, send } = useMindMeshWebSocket({
     sessionId,
-    enabled: !isMockMode,
-    onServerEvent: injectServerEvent,
+    enabled: true,
+    onServerEvent,
     onOpen: (sendNow) => {
-      // Minimal commands to make the demo pipeline actually emit diagram events.
-      sendNow({ type: "session.start", meeting_title: meetingTitle ?? "MindMesh Demo" })
+      requestedVisualizingRef.current = false
       sendNow({
-        type: "ui.command",
-        command: "visualize.toggle",
-        payload: { enabled: true },
+        type: "session.start",
+        meeting_title: meetingTitle ?? "MindMesh Demo",
       })
     },
   })
 
-  // In mock mode, auto-replay once on mount.
   useEffect(() => {
-    if (!isMockMode) return
-    replaySample()
-    return () => clearReplayTimers()
-  }, [clearReplayTimers, isMockMode, replaySample])
+    if (connectionState !== "open") {
+      requestedVisualizingRef.current = false
+      return
+    }
+
+    if (!visualizingEnabled || requestedVisualizingRef.current) return
+
+    if (
+      send({
+        type: "ui.command",
+        command: "visualize.toggle",
+        payload: { enabled: true },
+      })
+    ) {
+      requestedVisualizingRef.current = true
+    }
+  }, [connectionState, send, visualizingEnabled])
+
+  useEffect(() => () => clearDemoTimers(), [clearDemoTimers])
+
+  const resetDiagram = useCallback(() => {
+    clearDemoTimers()
+    return send({
+      type: "ui.command",
+      command: "diagram.reset",
+      payload: {},
+    })
+  }, [clearDemoTimers, send])
+
+  const runDemoScript = useCallback(() => {
+    if (connectionState !== "open") return
+
+    clearDemoTimers()
+    send({
+      type: "ui.command",
+      command: "visualize.toggle",
+      payload: { enabled: true },
+    })
+
+    let delayMs = 200
+    for (const line of DEMO_TRANSCRIPT_LINES) {
+      const timer = window.setTimeout(() => {
+        send({ type: "speech.final", text: line })
+      }, delayMs)
+      demoTimersRef.current.push(timer)
+      delayMs += 1000
+    }
+  }, [clearDemoTimers, connectionState, send])
 
   const value = useMemo<MindMeshContextValue>(
     () => ({
       state,
-      connectionState: isMockMode ? "open" : connectionState,
+      connectionState,
       send,
       debug: {
-        reset,
-        replaySample,
-        injectServerEvent,
+        resetDiagram,
+        runDemoScript,
       },
     }),
-    [state, connectionState, injectServerEvent, isMockMode, replaySample, reset, send]
+    [connectionState, resetDiagram, runDemoScript, send, state]
   )
 
   return <MindMeshContext.Provider value={value}>{children}</MindMeshContext.Provider>

@@ -1,14 +1,12 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { buildMindMeshRoomWsUrl } from "@/lib/mindmesh/events"
 
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
 ]
-
-const WS_BASE =
-  process.env.NEXT_PUBLIC_WS_URL?.replace(/^http/, "ws") ?? "ws://localhost:8000"
 
 export interface RemotePeer {
   peerId: string
@@ -147,7 +145,7 @@ export function useWebRTC(roomId: string, userId: string = "You"): WebRTCState {
       if (stream) { localStreamRef.current = stream; setLocalStream(stream) }
 
       // 2. Connect to signaling WebSocket
-      const ws = new WebSocket(`${WS_BASE}/ws/room/${roomId}?user_id=${encodeURIComponent(userId)}`)
+      const ws = new WebSocket(buildMindMeshRoomWsUrl(roomId, userId))
       wsRef.current = ws
 
       ws.onopen = () => { if (!cancelled) setIsConnected(true) }

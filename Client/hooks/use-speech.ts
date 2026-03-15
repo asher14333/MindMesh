@@ -6,9 +6,8 @@
  * What it does:
  *  1. Starts SpeechRecognition when `active` is true.
  *  2. Logs your own speech and all remote speakers to the browser console.
- *  3. Sends speech events tagged with a `speaker` id to the backend pipeline.
- *  4. Listens for transcript.update broadcasts from OTHER speakers and labels
- *     them automatically as Person 1, Person 2, Person 3, etc.
+ *  3. Sends speech events tagged with a per-tab `speaker` id through the
+ *     shared MindMesh WebSocket session.
  *
  * Console output (DevTools → Console):
  *   🎤 You (partial)  "first sales hands off to"
@@ -17,11 +16,8 @@
  */
 
 import { useEffect, useRef } from "react"
+import type { ClientEvent, TranscriptUpdateEvent } from "@/lib/mindmesh/events"
 
-const WS_BASE =
-  process.env.NEXT_PUBLIC_WS_URL?.replace(/^http/, "ws") ?? "ws://localhost:8000"
-
-// Stable random speaker ID for this browser tab — survives re-renders
 function makeSpeakerId() {
   return `spk-${Math.random().toString(36).slice(2, 10)}`
 }
@@ -68,10 +64,14 @@ declare global {
 // Module-level speaker ID so it persists across hot reloads
 const MY_SPEAKER_ID = makeSpeakerId()
 
-export function useSpeech(sessionId: string, active: boolean, visualizing: boolean = false) {
-  const pipelineWsRef = useRef<WebSocket | null>(null)
-  const visualizingRef = useRef(visualizing)
-  useEffect(() => { visualizingRef.current = visualizing }, [visualizing])
+type UseSpeechParams = {
+  active: boolean
+  send: (payload: ClientEvent) => boolean
+  lastTranscript: TranscriptUpdateEvent | null
+}
+
+export function useSpeech({ active, send, lastTranscript }: UseSpeechParams) {
+  const mySpeakerIdRef = useRef(MY_SPEAKER_ID)
 
   // speaker_id → "Person N" label map, shared across renders via ref
   const speakerLabelsRef = useRef<Map<string, string>>(new Map())
@@ -85,78 +85,21 @@ export function useSpeech(sessionId: string, active: boolean, visualizing: boole
     return speakerLabelsRef.current.get(speakerId)!
   }
 
-  // When MindMesh is toggled on mid-session, send visualize.toggle immediately
   useEffect(() => {
-    const ws = pipelineWsRef.current
-    if (!ws || ws.readyState !== WebSocket.OPEN) return
-    ws.send(JSON.stringify({
-      type: "ui.command",
-      command: "visualize.toggle",
-      payload: { enabled: visualizing },
-    }))
-  }, [visualizing])
+    if (!lastTranscript?.is_final) return
+    if (!lastTranscript.speaker || lastTranscript.speaker === mySpeakerIdRef.current) return
+
+    const label = labelFor(lastTranscript.speaker)
+    console.log(`🗣️ ${label} (FINAL)  "${lastTranscript.text}"`)
+  }, [lastTranscript])
 
   useEffect(() => {
     if (!active) return
 
-    // ── 1. Connect to the backend diagram pipeline ──────────────────────────
-    const ws = new WebSocket(`${WS_BASE}/ws/${sessionId}`)
-    pipelineWsRef.current = ws
-
-    ws.onopen = () => {
-      console.log("[MindMesh] pipeline WebSocket connected →", `${WS_BASE}/ws/${sessionId}`)
-      console.log("[MindMesh] your speaker id:", MY_SPEAKER_ID)
-      ws.send(JSON.stringify({ type: "session.start", meeting_title: "Live Meeting" }))
-      if (visualizingRef.current) {
-        ws.send(JSON.stringify({ type: "ui.command", command: "visualize.toggle", payload: { enabled: true } }))
-      }
-    }
-
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data) as Record<string, unknown>
-
-        if (msg.type === "transcript.update") {
-          const speaker = msg.speaker as string | undefined
-          const text = msg.text as string
-          const isFinal = msg.is_final as boolean
-
-          if (!speaker || speaker === MY_SPEAKER_ID) {
-            // Our own echo — already logged at send time, skip
-            return
-          }
-
-          // Remote speaker — label and log finals only
-          if (isFinal) {
-            const label = labelFor(speaker)
-            console.log(`🗣️ ${label} (FINAL)  "${text}"`)
-          }
-          return
-        }
-
-        if (msg.type === "diagram.replace") {
-          console.log("[MindMesh] diagram.replace — nodes:", (msg.diagram as Record<string, unknown[]>)?.nodes?.length ?? 0)
-        } else if (msg.type === "diagram.patch") {
-          console.log("[MindMesh] diagram.patch — ops:", (msg.patch as Record<string, unknown[]>)?.ops?.length ?? 0)
-        } else if (msg.type === "intent.result") {
-          const r = msg.result as Record<string, unknown>
-          console.log("[MindMesh] intent:", r?.diagram_type, "confidence:", r?.confidence)
-        } else if (msg.type === "error") {
-          console.warn("[MindMesh] backend error:", msg.message)
-        }
-      } catch {
-        // non-JSON frame — ignore
-      }
-    }
-
-    ws.onerror = () => console.error("[MindMesh] pipeline WebSocket error")
-    ws.onclose = () => console.log("[MindMesh] pipeline WebSocket closed")
-
-    // ── 2. Start SpeechRecognition ──────────────────────────────────────────
     const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition
     if (!SR) {
       console.warn("[MindMesh] SpeechRecognition not supported in this browser (use Chrome/Edge)")
-      return () => { ws.close(); pipelineWsRef.current = null }
+      return
     }
 
     const recognition = new SR()
@@ -175,14 +118,18 @@ export function useSpeech(sessionId: string, active: boolean, visualizing: boole
 
         if (result.isFinal) {
           console.log(`🎤 You (FINAL)    "${text}"`)
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "speech.final", text, speaker: MY_SPEAKER_ID }))
-          }
+          send({
+            type: "speech.final",
+            text,
+            speaker: mySpeakerIdRef.current,
+          })
         } else {
           console.log(`🎤 You (partial)  "${text}"`)
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "speech.partial", text, speaker: MY_SPEAKER_ID }))
-          }
+          send({
+            type: "speech.partial",
+            text,
+            speaker: mySpeakerIdRef.current,
+          })
         }
       }
     }
@@ -204,13 +151,12 @@ export function useSpeech(sessionId: string, active: boolean, visualizing: boole
 
     recognition.start()
     console.log("[MindMesh] SpeechRecognition started — speak and watch this console")
+    console.log("[MindMesh] your speaker id:", mySpeakerIdRef.current)
 
     return () => {
       stopped = true
       if (restartTimer) clearTimeout(restartTimer)
       try { recognition.abort() } catch { /* already stopped */ }
-      ws.close()
-      pipelineWsRef.current = null
     }
-  }, [active, sessionId])
+  }, [active, send])
 }
