@@ -264,7 +264,7 @@ class DiagramGenerator:
                 kind=fact.kind,
                 status=fact.status,
                 description=fact.description,
-                lane=fact.lane,
+                lane=fact.effective_lane,
                 actor=fact.actor,
                 time_label=fact.time_label,
             ),
