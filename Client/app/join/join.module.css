@@ -1,0 +1,109 @@
+.page {
+  min-height: 100vh;
+  background: var(--background, #f8fafc);
+  background:
+    radial-gradient(900px 520px at 20% 0%, rgba(37, 99, 235, 0.10), transparent 60%),
+    radial-gradient(760px 460px at 85% 10%, rgba(2, 132, 199, 0.10), transparent 55%),
+    linear-gradient(180deg, rgba(248, 250, 252, 1) 0%, rgba(241, 245, 249, 1) 60%, rgba(248, 250, 252, 1) 100%);
+  color: var(--foreground, #0b1220);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.card {
+  width: min(520px, 100%);
+  border-radius: 20px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow:
+    0 30px 90px rgba(2, 6, 23, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.70);
+  padding: 22px;
+}
+
+.title {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+}
+
+.sub {
+  margin-top: 8px;
+  color: rgba(15, 23, 42, 0.62);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.row {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(15, 23, 42, 0.78);
+}
+
+.input {
+  height: 44px;
+  border-radius: 12px;
+  padding: 0 12px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.95);
+  color: rgba(15, 23, 42, 0.86);
+  outline: none;
+}
+
+.input:focus {
+  border-color: rgba(56, 189, 248, 0.35);
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.12);
+}
+
+.buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.80);
+  color: rgba(15, 23, 42, 0.86);
+  cursor: pointer;
+  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.20);
+}
+
+.btnPrimary {
+  border-color: rgba(15, 23, 42, 0.10);
+  background: rgba(11, 18, 32, 0.96);
+  color: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 16px 44px rgba(2, 6, 23, 0.16),
+    0 2px 0 rgba(255, 255, 255, 0.12) inset;
+}
+
+.btnPrimary:hover {
+  border-color: rgba(15, 23, 42, 0.16);
+  background: rgba(11, 18, 32, 1);
+}
